@@ -1116,7 +1116,67 @@ set_hint_label = tk.Label(
     bg='#2b2b2b',
     fg='#888888'
 )
-set_hint_label.pack(pady=(0, 15))
+set_hint_label.pack(pady=(0, 10))
+
+# Button-Frame für Set-Verwaltung
+set_button_frame = tk.Frame(set_input_frame, bg='#2b2b2b')
+set_button_frame.pack(pady=(0, 15))
+
+load_set_button = tk.Button(
+    set_button_frame,
+    text="📦 Set laden",
+    font=('Helvetica', 18, 'bold'),
+    bg='#2196f3',
+    fg='white',
+    activebackground='#1976d2',
+    activeforeground='white',
+    relief='flat',
+    bd=0,
+    padx=30,
+    pady=12,
+    cursor='hand2'
+)
+load_set_button.pack(side='left', padx=5)
+
+clear_sets_button = tk.Button(
+    set_button_frame,
+    text="🗑 Zurücksetzen",
+    font=('Helvetica', 18, 'bold'),
+    bg='#ff5722',
+    fg='white',
+    activebackground='#e64a19',
+    activeforeground='white',
+    relief='flat',
+    bd=0,
+    padx=30,
+    pady=12,
+    cursor='hand2'
+)
+clear_sets_button.pack(side='left', padx=5)
+
+# Set-Info Anzeige
+set_info_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
+set_info_frame.pack(fill='x', pady=(0, 20))
+set_info_frame.pack_forget()  # Initial versteckt
+
+set_info_title = tk.Label(
+    set_info_frame,
+    text="Geladene Sets:",
+    font=('Helvetica', 20, 'bold'),
+    bg='#2b2b2b',
+    fg='white'
+)
+set_info_title.pack(pady=(15, 10))
+
+set_info_label = tk.Label(
+    set_info_frame,
+    text="",
+    font=('Helvetica', 16),
+    bg='#2b2b2b',
+    fg='#4caf50',
+    justify='left'
+)
+set_info_label.pack(pady=(0, 15), padx=20)
 
 # Status-Label
 status_label = tk.Label(
@@ -1373,7 +1433,7 @@ class AutomationController:
     Keine Logik implementiert – nur die Struktur und Hooks.
     """
 
-    def __init__(self, tk_root: tk.Tk, progress_frame, progress_lbl, percentage_lbl, set_name_lbl, status_lbl):
+    def __init__(self, tk_root: tk.Tk, progress_frame, progress_lbl, percentage_lbl, set_name_lbl, status_lbl, set_info_frame, set_info_lbl):
         self.root = tk_root
         self.state = AutomationState.INIT
         self.running = False
@@ -1383,6 +1443,7 @@ class AutomationController:
         # Cache für Teile aus ausgewählten Sets (Aggregation)
         self.set_numbers: list[str] = []
         self.cached_set_parts: list[dict] = []
+        self.loaded_sets_info: list[dict] = []  # Info über geladene Sets
         # Tracking für gefundene Teile: key=(part_id, color_name), value=gefundene_anzahl
         self.found_parts: dict[tuple, int] = {}
         # GUI-Referenzen
@@ -1391,15 +1452,106 @@ class AutomationController:
         self.percentage_label = percentage_lbl
         self.set_name_label = set_name_lbl
         self.status_label = status_lbl
+        self.set_info_frame = set_info_frame
+        self.set_info_label = set_info_lbl
+
+    def load_sets(self):
+        """Lädt Sets aus dem Eingabefeld und zeigt Informationen an."""
+        user_input = set_number.get().strip()
+        if not user_input:
+            self.status_label.config(text="Bitte Setnummer eingeben", fg='#ff5722')
+            return
+        
+        self.status_label.config(text="Lade Sets...", fg='#2196f3')
+        
+        # Normalisiere und lade Teilelisten
+        new_set_numbers = [s.strip() for s in user_input.split(',') if s.strip()]
+        
+        for sn in new_set_numbers:
+            if sn in self.set_numbers:
+                continue  # Set bereits geladen
+            
+            parts = get_parts_from_set(sn)
+            if parts:
+                self.set_numbers.append(sn)
+                # Speichere Set-Info
+                total_qty = sum(int(p.get('qty', '1')) for p in parts)
+                self.loaded_sets_info.append({
+                    'set_number': sn,
+                    'part_count': len(parts),
+                    'total_qty': total_qty
+                })
+                
+                # Füge Teile hinzu
+                for p in parts:
+                    key = (p.get('id'), p.get('color_name'))
+                    if key in [(existing.get('id'), existing.get('color_name')) for existing in self.cached_set_parts]:
+                        # Teil bereits vorhanden, erhöhe Menge
+                        for existing in self.cached_set_parts:
+                            if (existing.get('id'), existing.get('color_name')) == key:
+                                try:
+                                    existing['qty'] = str(int(existing['qty']) + int(p.get('qty', '1')))
+                                except:
+                                    pass
+                                break
+                    else:
+                        # Neues Teil hinzufügen
+                        self.cached_set_parts.append(p.copy())
+        
+        # Aktualisiere globale Referenz
+        global current_set_parts
+        current_set_parts = self.cached_set_parts
+        
+        # Zeige Set-Informationen
+        if self.loaded_sets_info:
+            info_text = ""
+            for idx, set_info in enumerate(self.loaded_sets_info, 1):
+                info_text += f"{idx}. Set {set_info['set_number']}: {set_info['part_count']} verschiedene Teile, {set_info['total_qty']} gesamt\n"
+            
+            total_parts = len(self.cached_set_parts)
+            total_qty = sum(int(p.get('qty', '1')) for p in self.cached_set_parts)
+            info_text += f"\n✓ Gesamt: {total_parts} verschiedene Teile, {total_qty} Stück"
+            
+            self.set_info_label.config(text=info_text)
+            self.set_info_frame.pack(fill='x', pady=(0, 20))
+            self.status_label.config(text="Sets geladen - bereit zum Starten", fg='#4caf50')
+            
+            # Eingabefeld leeren für nächste Eingabe
+            set_number.set("")
+        else:
+            self.status_label.config(text="Keine gültigen Sets gefunden", fg='#ff5722')
+    
+    def clear_sets(self):
+        """Löscht alle geladenen Sets."""
+        self.set_numbers = []
+        self.cached_set_parts = []
+        self.loaded_sets_info = []
+        self.found_parts = {}
+        
+        global current_set_parts
+        current_set_parts = []
+        
+        self.set_info_frame.pack_forget()
+        self.status_label.config(text="Bereit", fg='#4caf50')
+        set_number.set("")
 
     def start(self):
         if self.running:
             return
+        
+        # Prüfe ob Sets geladen wurden
+        if not self.cached_set_parts:
+            self.status_label.config(text="Bitte erst Sets laden!", fg='#ff5722')
+            return
+        
         self.running = True
         self.state = AutomationState.INIT
         # Zeige Fortschrittsbereich
         self.progress_frame.pack(fill='both', expand=True, pady=(0, 20))
         self.status_label.config(text="Automatik läuft...", fg='#2196f3')
+        # Tracking zurücksetzen
+        self.found_parts = {}
+        self._update_parts_list()
         # Nicht den Tk-Hauptthread blockieren: separater Thread
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
@@ -1429,50 +1581,7 @@ class AutomationController:
             case AutomationState.INIT:
                 # Setup, Sensor-Reset, LED-Status, Home-Fahrt
                 self._ensure_gpio()
-                # Sets aus Eingabefeld holen
-                user_input = set_number.get().strip()
-                if user_input:
-                    # Normalisiere und lade Teilelisten
-                    self.set_numbers = [s.strip() for s in user_input.split(',') if s.strip()]
-                    aggregated_parts = []
-                    for sn in self.set_numbers:
-                        parts = get_parts_from_set(sn)
-                        if parts:
-                            aggregated_parts.extend(parts)
-                    # Optional: Duplikate zusammenführen (gleiche id+color)
-                    merged: dict[tuple, dict] = {}
-                    for p in aggregated_parts:
-                        key = (p.get('id'), p.get('color_name'))
-                        if key in merged:
-                            # Menge aufsummieren, falls numerisch
-                            try:
-                                merged[key]['qty'] = str(int(merged[key]['qty']) + int(str(p.get('qty','0')).strip() or '0'))
-                            except Exception:
-                                pass
-                        else:
-                            merged[key] = p.copy()
-                    self.cached_set_parts = list(merged.values())
-                    # Globale Referenz für bestehende Vergleichslogik aktualisieren
-                    try:
-                        current_set_parts = self.cached_set_parts
-                    except Exception:
-                        pass
-                    # Kurze Info ins GUI
-                    set_info = f"Automatik: {len(self.cached_set_parts)} Teile aus {len(self.set_numbers)} Set(s) geladen"
-                    try:
-                        result_label.config(text=set_info)
-                    except Exception:
-                        pass
-                    # Initialisiere Tracking und zeige Teileliste
-                    self.found_parts = {}
-                    self._update_parts_list()
-                else:
-                    # Falls keine Eingabe: benutze bereits geladene globale Teile (falls vorhanden)
-                    try:
-                        self.cached_set_parts = current_set_parts or []
-                    except Exception:
-                        self.cached_set_parts = []
-                # Übergang ins Warten
+                # Sets sind bereits geladen, direkt weiter
                 self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.WARTEN_AUF_TEIL:
@@ -1665,10 +1774,14 @@ automation = AutomationController(
     progress_label,
     percentage_label,
     set_name_label,
-    status_label
+    status_label,
+    set_info_frame,
+    set_info_label
 )
 
-# Button-Command zuweisen
+# Button-Commands zuweisen
+load_set_button.config(command=automation.load_sets)
+clear_sets_button.config(command=automation.clear_sets)
 start_button.config(command=automation.start)
 
 # Kamera vorbereiten
