@@ -568,9 +568,10 @@ def identify_brick(image_path):
         print(f"Fehler beim Hochladen des Bildes: {e}")
         return None, None, None, 0, None
 
-def display_image_from_url(img_url, label):
+def display_image_from_url(img_url, label, max_size=(200, 200)):
     """
     Lade ein Bild von einer URL und zeige es im GUI-Label an.
+    :param max_size: Tuple (width, height) für maximale Bildgröße
     """
     try:
         headers = {
@@ -581,7 +582,7 @@ def display_image_from_url(img_url, label):
         if response.status_code == 200:
             img_data = BytesIO(response.content)
             img = Image.open(img_data)
-            img = img.resize((200, 200))
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
             photo = ImageTk.PhotoImage(img)
             label.config(image=photo)
             label.image = photo
@@ -1168,15 +1169,23 @@ set_info_title = tk.Label(
 )
 set_info_title.pack(pady=(15, 10))
 
+# Container für Set-Details (Text + Bilder)
+set_details_container = tk.Frame(set_info_frame, bg='#2b2b2b')
+set_details_container.pack(pady=(0, 15), padx=20, fill='both')
+
 set_info_label = tk.Label(
-    set_info_frame,
+    set_details_container,
     text="",
     font=('Helvetica', 16),
     bg='#2b2b2b',
     fg='#4caf50',
     justify='left'
 )
-set_info_label.pack(pady=(0, 15), padx=20)
+set_info_label.pack(side='left', fill='both', expand=True)
+
+# Container für Set-Bilder
+set_images_container = tk.Frame(set_details_container, bg='#2b2b2b')
+set_images_container.pack(side='left', padx=(20, 0))
 
 # Status-Label
 status_label = tk.Label(
@@ -1190,7 +1199,6 @@ status_label.pack(pady=(0, 20))
 
 # Fortschrittsbereich (initial versteckt)
 progress_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
-progress_frame.pack(fill='both', expand=True, pady=(0, 20))
 progress_frame.pack_forget()  # Initial versteckt
 
 # Set-Namen Label
@@ -1231,6 +1239,42 @@ percentage_label = tk.Label(
     fg='#2196f3'
 )
 percentage_label.pack(pady=15)
+
+# Steuerungs-Buttons (Pause/Stop)
+control_buttons_frame = tk.Frame(progress_frame, bg='#2b2b2b')
+control_buttons_frame.pack(pady=(20, 15))
+
+pause_button = tk.Button(
+    control_buttons_frame,
+    text="⏸ Pause",
+    font=('Helvetica', 20, 'bold'),
+    bg='#ff9800',
+    fg='white',
+    activebackground='#f57c00',
+    activeforeground='white',
+    relief='flat',
+    bd=0,
+    padx=40,
+    pady=15,
+    cursor='hand2'
+)
+pause_button.pack(side='left', padx=10)
+
+stop_button = tk.Button(
+    control_buttons_frame,
+    text="⏹ Stoppen",
+    font=('Helvetica', 20, 'bold'),
+    bg='#f44336',
+    fg='white',
+    activebackground='#d32f2f',
+    activeforeground='white',
+    relief='flat',
+    bd=0,
+    padx=40,
+    pady=15,
+    cursor='hand2'
+)
+stop_button.pack(side='left', padx=10)
 
 def calculate_rgb_distance(rgb1, rgb2):
     """
@@ -1433,10 +1477,11 @@ class AutomationController:
     Keine Logik implementiert – nur die Struktur und Hooks.
     """
 
-    def __init__(self, tk_root: tk.Tk, progress_frame, progress_lbl, percentage_lbl, set_name_lbl, status_lbl, set_info_frame, set_info_lbl):
+    def __init__(self, tk_root: tk.Tk, progress_frame, progress_lbl, percentage_lbl, set_name_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn):
         self.root = tk_root
         self.state = AutomationState.INIT
         self.running = False
+        self.paused = False
         self.thread = None
         # Platzhalter: GPIO-Setup (optional)
         self._gpio_initialized = False
@@ -1454,6 +1499,11 @@ class AutomationController:
         self.status_label = status_lbl
         self.set_info_frame = set_info_frame
         self.set_info_label = set_info_lbl
+        self.set_images_container = set_images_container
+        self.set_image_labels: list[tk.Label] = []  # Liste der Bild-Labels
+        self.start_button = start_btn
+        self.pause_button = pause_btn
+        self.stop_button = stop_btn
 
     def load_sets(self):
         """Lädt Sets aus dem Eingabefeld und zeigt Informationen an."""
@@ -1473,11 +1523,33 @@ class AutomationController:
             
             parts = get_parts_from_set(sn)
             if parts:
+                # Hole Set-Namen von BrickLink
+                set_name = ""
+                set_img_url = ""
+                set_id_normalized = sn if "-" in sn else f"{sn}-1"
+                
+                try:
+                    url = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_id_normalized}#T=I"
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    response = requests.get(url, headers=headers)
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.text, "html.parser")
+                        title = soup.find("title").text if soup.find("title") else ""
+                        set_name = title.split("|")[0].strip() if "|" in title else title.strip()
+                except Exception as e:
+                    print(f"Fehler beim Laden des Set-Namens: {e}")
+                    set_name = f"Set {sn}"
+                
+                # Hole Set-Bild
+                set_img_url = get_set_image_url(sn)
+                
                 self.set_numbers.append(sn)
                 # Speichere Set-Info
                 total_qty = sum(int(p.get('qty', '1')) for p in parts)
                 self.loaded_sets_info.append({
                     'set_number': sn,
+                    'set_name': set_name,
+                    'set_img_url': set_img_url,
                     'part_count': len(parts),
                     'total_qty': total_qty
                 })
@@ -1506,13 +1578,19 @@ class AutomationController:
         if self.loaded_sets_info:
             info_text = ""
             for idx, set_info in enumerate(self.loaded_sets_info, 1):
-                info_text += f"{idx}. Set {set_info['set_number']}: {set_info['part_count']} verschiedene Teile, {set_info['total_qty']} gesamt\n"
+                set_display_name = set_info['set_name'] if set_info['set_name'] else f"Set {set_info['set_number']}"
+                info_text += f"{idx}. {set_display_name}\n"
+                info_text += f"   {set_info['part_count']} verschiedene Teile, {set_info['total_qty']} gesamt\n\n"
             
             total_parts = len(self.cached_set_parts)
             total_qty = sum(int(p.get('qty', '1')) for p in self.cached_set_parts)
-            info_text += f"\n✓ Gesamt: {total_parts} verschiedene Teile, {total_qty} Stück"
+            info_text += f"✓ Gesamt: {total_parts} verschiedene Teile, {total_qty} Stück"
             
             self.set_info_label.config(text=info_text)
+            
+            # Zeige Set-Bilder
+            self._update_set_images()
+            
             self.set_info_frame.pack(fill='x', pady=(0, 20))
             self.status_label.config(text="Sets geladen - bereit zum Starten", fg='#4caf50')
             
@@ -1521,12 +1599,37 @@ class AutomationController:
         else:
             self.status_label.config(text="Keine gültigen Sets gefunden", fg='#ff5722')
     
+    def _update_set_images(self):
+        """Aktualisiert die Set-Bild-Anzeige."""
+        # Lösche alte Bilder
+        for label in self.set_image_labels:
+            label.destroy()
+        self.set_image_labels.clear()
+        
+        # Zeige neue Bilder (maximal 3 nebeneinander)
+        for set_info in self.loaded_sets_info[-3:]:  # Nur die letzten 3 Sets
+            if set_info.get('set_img_url'):
+                img_label = tk.Label(self.set_images_container, bg='#2b2b2b')
+                img_label.pack(side='top', pady=5)
+                self.set_image_labels.append(img_label)
+                
+                # Lade Bild asynchron
+                try:
+                    display_image_from_url(set_info['set_img_url'], img_label, max_size=(150, 150))
+                except Exception as e:
+                    print(f"Fehler beim Laden des Set-Bildes: {e}")
+    
     def clear_sets(self):
         """Löscht alle geladenen Sets."""
         self.set_numbers = []
         self.cached_set_parts = []
         self.loaded_sets_info = []
         self.found_parts = {}
+        
+        # Lösche Set-Bilder
+        for label in self.set_image_labels:
+            label.destroy()
+        self.set_image_labels.clear()
         
         global current_set_parts
         current_set_parts = []
@@ -1545,27 +1648,58 @@ class AutomationController:
             return
         
         self.running = True
+        self.paused = False
         self.state = AutomationState.INIT
-        # Zeige Fortschrittsbereich
-        self.progress_frame.pack(fill='both', expand=True, pady=(0, 20))
+        
+        # Verstecke Start-Button
+        self.start_button.pack_forget()
+        
+        # Zeige Fortschrittsbereich an gleicher Stelle
+        self.progress_frame.pack(fill='both', expand=True, pady=20)
         self.status_label.config(text="Automatik läuft...", fg='#2196f3')
+        
         # Tracking zurücksetzen
         self.found_parts = {}
         self._update_parts_list()
+        
         # Nicht den Tk-Hauptthread blockieren: separater Thread
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
 
+    def toggle_pause(self):
+        """Pausiert oder setzt die Automatik fort."""
+        if not self.running:
+            return
+        
+        self.paused = not self.paused
+        
+        if self.paused:
+            self.pause_button.config(text="▶ Fortsetzen", bg='#4caf50', activebackground='#45a049')
+            self.status_label.config(text="Pausiert", fg='#ff9800')
+        else:
+            self.pause_button.config(text="⏸ Pause", bg='#ff9800', activebackground='#f57c00')
+            self.status_label.config(text="Automatik läuft...", fg='#2196f3')
+    
     def stop(self):
         self.running = False
+        self.paused = False
+        
         # Verstecke Fortschrittsbereich
         self.progress_frame.pack_forget()
-        self.status_label.config(text="Fertig", fg='#4caf50')
+        
+        # Zeige Start-Button wieder
+        self.start_button.pack(pady=20)
+        
+        # Setze Pause-Button zurück
+        self.pause_button.config(text="⏸ Pause", bg='#ff9800', activebackground='#f57c00')
+        
+        self.status_label.config(text="Gestoppt", fg='#4caf50')
 
     def _run_loop(self):
         """Hauptschleife der Automatik. Ruft periodisch tick() auf."""
         while self.running:
-            self.tick()
+            if not self.paused:
+                self.tick()
             time.sleep(0.05)  # 20 Hz Takt, anpassbar
 
     def tick(self):
@@ -1776,13 +1910,19 @@ automation = AutomationController(
     set_name_label,
     status_label,
     set_info_frame,
-    set_info_label
+    set_info_label,
+    set_images_container,
+    start_button,
+    pause_button,
+    stop_button
 )
 
 # Button-Commands zuweisen
 load_set_button.config(command=automation.load_sets)
 clear_sets_button.config(command=automation.clear_sets)
 start_button.config(command=automation.start)
+pause_button.config(command=automation.toggle_pause)
+stop_button.config(command=automation.stop)
 
 # Kamera vorbereiten
 try:
