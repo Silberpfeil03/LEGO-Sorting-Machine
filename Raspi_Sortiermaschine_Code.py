@@ -806,13 +806,7 @@ def capture_and_identify():
         last_photo_label.config(image="", text="Kein Bild vorhanden")
         last_photo_label.image = None
 
-def show_start_page():
-    frame_start.pack(fill="both", expand=True)
-    frame_recognition.pack_forget()
 
-def show_recognition_page():
-    frame_start.pack_forget()
-    frame_recognition.pack(fill="both", expand=True)
 
 def extract_color_from_part_name(part_name):
     """
@@ -1065,104 +1059,118 @@ def get_set_image_url(set_id):
 
 # --- GUI erstellen ---
 root = tk.Tk()
-root.title("Brick Recognizer")
+root.title("🧱 LEGO Sortiermaschine")
+root.attributes('-fullscreen', True)
+root.configure(bg='#1e1e1e')
 
-# Variable für die Setnummer
+# ESC zum Beenden
+root.bind('<Escape>', lambda e: root.quit())
+
+# Hauptcontainer
+main_container = tk.Frame(root, bg='#1e1e1e')
+main_container.pack(fill='both', expand=True, padx=20, pady=20)
+
+# Header
+header_frame = tk.Frame(main_container, bg='#1e1e1e')
+header_frame.pack(fill='x', pady=(0, 30))
+
+title_label = tk.Label(
+    header_frame,
+    text="🧱 LEGO Sortiermaschine",
+    font=('Helvetica', 42, 'bold'),
+    bg='#1e1e1e',
+    fg='white'
+)
+title_label.pack()
+
+# Set-Eingabe Bereich
+set_input_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
+set_input_frame.pack(fill='x', pady=(0, 20))
+
+set_label = tk.Label(
+    set_input_frame,
+    text="Setnummer(n) eingeben:",
+    font=('Helvetica', 20),
+    bg='#2b2b2b',
+    fg='white'
+)
+set_label.pack(pady=(15, 10))
+
 set_number = tk.StringVar(root)
-
-# --- Startseite ---
-frame_start = ttk.Frame(root)
-frame_start.pack(fill="both", expand=True)
-
-label_intro = ttk.Label(frame_start, text="Bitte Setnummer eingeben:", font=("Helvetica", 12))
-label_intro.pack(pady=10)
-
-entry_set_number = ttk.Entry(frame_start, textvariable=set_number, font=("Helvetica", 12))
-entry_set_number.pack(pady=5)
-
-button_to_recognition = ttk.Button(
-    frame_start, text="Zur Bilderkennung", command=show_recognition_page
+entry_set_number = tk.Entry(
+    set_input_frame,
+    textvariable=set_number,
+    font=('Helvetica', 24),
+    bg='#3c3c3c',
+    fg='white',
+    insertbackground='white',
+    relief='flat',
+    justify='center'
 )
-button_to_recognition.pack(pady=20)
+entry_set_number.pack(pady=(0, 10), padx=20, ipady=15)
 
-# Label für Set-Infos
-set_info_label = ttk.Label(frame_start, text="", font=("Helvetica", 10), wraplength=350, justify="left")
-set_info_label.pack(pady=5)
-
-set_image_label = ttk.Label(frame_start)
-set_image_label.pack(pady=5)
-
-def search_set():
-    global current_set_parts
-    
-    set_id = set_number.get().strip()
-    if not set_id:
-        set_info_label.config(text="Bitte eine Setnummer eingeben.")
-        return
-    parts = get_parts_from_set(set_id)
-    current_set_parts = parts  # Speichere für Farbvergleiche
-    # Setnamen auslesen (optional, aus Seitentitel)
-    url = f"https://www.bricklink.com/v2/catalog/catalogitem.page?S={set_id}#T=I"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, "html.parser")
-        title = soup.find("title").text if soup.find("title") else ""
-        set_name = title.split("|")[0].strip() if "|" in title else title.strip()
-    except Exception:
-        set_name = ""
-    if parts:
-        info = f"Setname: {set_name}\nTeile (max. 5):\n"
-        for part in parts[:5]:
-            part_info = f"ID: {part['id']}, Menge: {part['qty']}"
-            
-            # Zeige Farbe und Namen falls verfügbar
-            if part.get('color_name'):
-                # Versuche BrickLink-Farbe mit LEGO-Farbe zu matchen
-                matched_color = match_bricklink_color_to_lego(part['color_name'])
-                part_info += f"\nFarbe: {matched_color}"
-            
-            if part.get('name'):
-                # Kürze sehr lange Namen
-                display_name = part['name'][:50] + "..." if len(part['name']) > 50 else part['name']
-                part_info += f"\nName: {display_name}"
-            
-            info += part_info + "\n\n"
-            
-        if len(parts) > 5:
-            info += f"... und {len(parts) - 5} weitere Teile"
-        
-        set_info_label.config(text=info)
-        # Optional: Zeige das erste Bild im GUI
-        if parts[0]["img_url"]:
-            display_image_from_url(parts[0]["img_url"], set_image_label)
-        else:
-            clear_image(set_image_label)
-        set_img_url = get_set_image_url(set_id)
-        if set_img_url:
-            display_image_from_url(set_img_url, set_image_label)
-        else:
-            clear_image(set_image_label)
-    else:
-        set_info_label.config(text="Keine Teile gefunden oder ungültige Setnummer.")
-
-# Button zum Suchen des Sets
-button_search_set = ttk.Button(
-    frame_start, text="Set suchen", command=search_set
+set_hint_label = tk.Label(
+    set_input_frame,
+    text="Mehrere Sets mit Komma trennen (z.B. 4723-1,31058)",
+    font=('Helvetica', 14),
+    bg='#2b2b2b',
+    fg='#888888'
 )
-button_search_set.pack(pady=5)
+set_hint_label.pack(pady=(0, 15))
 
-# --- Bilderkennungsseite ---
-frame_recognition = ttk.Frame(root)
+# Status-Label
+status_label = tk.Label(
+    main_container,
+    text="Bereit",
+    font=('Helvetica', 18),
+    bg='#1e1e1e',
+    fg='#4caf50'
+)
+status_label.pack(pady=(0, 20))
 
-frame_controls = ttk.Frame(frame_recognition)
-frame_controls.pack(pady=10)
+# Fortschrittsbereich (initial versteckt)
+progress_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
+progress_frame.pack(fill='both', expand=True, pady=(0, 20))
+progress_frame.pack_forget()  # Initial versteckt
 
-frame_result = ttk.Frame(frame_recognition)
-frame_result.pack(pady=10)
+# Set-Namen Label
+set_name_label = tk.Label(
+    progress_frame,
+    text="",
+    font=('Helvetica', 22),
+    bg='#2b2b2b',
+    fg='#aaaaaa'
+)
+set_name_label.pack(pady=(20, 10))
 
-capture_button = ttk.Button(frame_controls, text="Bild aufnehmen", command=capture_and_identify)
-capture_button.pack(pady=10)
+# Fortschritts-Zahlen (groß)
+progress_label = tk.Label(
+    progress_frame,
+    text="0 / 0",
+    font=('Helvetica', 72, 'bold'),
+    bg='#2b2b2b',
+    fg='#4caf50'
+)
+progress_label.pack(pady=15)
+
+progress_text_label = tk.Label(
+    progress_frame,
+    text="Teile gefunden",
+    font=('Helvetica', 20),
+    bg='#2b2b2b',
+    fg='#888888'
+)
+progress_text_label.pack(pady=(0, 20))
+
+# Prozentanzeige
+percentage_label = tk.Label(
+    progress_frame,
+    text="0%",
+    font=('Helvetica', 48, 'bold'),
+    bg='#2b2b2b',
+    fg='#2196f3'
+)
+percentage_label.pack(pady=15)
 
 def calculate_rgb_distance(rgb1, rgb2):
     """
@@ -1365,7 +1373,7 @@ class AutomationController:
     Keine Logik implementiert – nur die Struktur und Hooks.
     """
 
-    def __init__(self, tk_root: tk.Tk):
+    def __init__(self, tk_root: tk.Tk, progress_frame, progress_lbl, percentage_lbl, set_name_lbl, status_lbl):
         self.root = tk_root
         self.state = AutomationState.INIT
         self.running = False
@@ -1377,32 +1385,30 @@ class AutomationController:
         self.cached_set_parts: list[dict] = []
         # Tracking für gefundene Teile: key=(part_id, color_name), value=gefundene_anzahl
         self.found_parts: dict[tuple, int] = {}
-        # Automatik-Fenster
-        self.automation_window = None
-        self.progress_label = None
-        self.percentage_label = None
-        self.set_name_label = None
+        # GUI-Referenzen
+        self.progress_frame = progress_frame
+        self.progress_label = progress_lbl
+        self.percentage_label = percentage_lbl
+        self.set_name_label = set_name_lbl
+        self.status_label = status_lbl
 
     def start(self):
         if self.running:
             return
         self.running = True
         self.state = AutomationState.INIT
-        # Erstelle Automatik-Fenster
-        self._create_automation_window()
+        # Zeige Fortschrittsbereich
+        self.progress_frame.pack(fill='both', expand=True, pady=(0, 20))
+        self.status_label.config(text="Automatik läuft...", fg='#2196f3')
         # Nicht den Tk-Hauptthread blockieren: separater Thread
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
 
     def stop(self):
         self.running = False
-        # Schließe Automatik-Fenster
-        if self.automation_window:
-            try:
-                self.automation_window.destroy()
-            except Exception:
-                pass
-            self.automation_window = None
+        # Verstecke Fortschrittsbereich
+        self.progress_frame.pack_forget()
+        self.status_label.config(text="Fertig", fg='#4caf50')
 
     def _run_loop(self):
         """Hauptschleife der Automatik. Ruft periodisch tick() auf."""
@@ -1421,18 +1427,10 @@ class AutomationController:
 
         match self.state:
             case AutomationState.INIT:
-                # TODO: Setup, Sensor-Reset, LED-Status, Home-Fahrt
+                # Setup, Sensor-Reset, LED-Status, Home-Fahrt
                 self._ensure_gpio()
-                # Sets abfragen (ein oder mehrere, kommasepariert)
-                try:
-                    import tkinter.simpledialog as simpledialog
-                    user_input = simpledialog.askstring(
-                        "Sets wählen",
-                        "Welche Setnummer(n) sollen sortiert werden?\nMehrere mit Komma trennen, z.B. 4723-1,31058",
-                        parent=self.root
-                    )
-                except Exception:
-                    user_input = None
+                # Sets aus Eingabefeld holen
+                user_input = set_number.get().strip()
                 if user_input:
                     # Normalisiere und lade Teilelisten
                     self.set_numbers = [s.strip() for s in user_input.split(',') if s.strip()]
@@ -1585,94 +1583,7 @@ class AutomationController:
         # Beispiel: return GPIO.input(23) == GPIO.LOW
         return False
 
-    def _create_automation_window(self):
-        """Erstellt das Fullscreen-Fenster für den Automatik-Modus."""
-        if self.automation_window:
-            return
-        
-        self.automation_window = tk.Toplevel(self.root)
-        self.automation_window.title("Automatik-Sortierung")
-        self.automation_window.attributes('-fullscreen', True)
-        self.automation_window.configure(bg='#2b2b2b')
-        
-        # Escape-Taste zum Beenden
-        self.automation_window.bind('<Escape>', lambda e: self.stop())
-        
-        # Header
-        header_frame = tk.Frame(self.automation_window, bg='#1e1e1e', height=100)
-        header_frame.pack(fill='x', side='top')
-        header_frame.pack_propagate(False)
-        
-        title_label = tk.Label(
-            header_frame,
-            text="🔧 Automatische Sortierung",
-            font=('Helvetica', 32, 'bold'),
-            bg='#1e1e1e',
-            fg='white'
-        )
-        title_label.pack(pady=25)
-        
-        # Hauptbereich zentriert
-        main_frame = tk.Frame(self.automation_window, bg='#2b2b2b')
-        main_frame.pack(fill='both', expand=True)
-        
-        # Zentrierter Content
-        center_frame = tk.Frame(main_frame, bg='#2b2b2b')
-        center_frame.place(relx=0.5, rely=0.5, anchor='center')
-        
-        # Set-Name
-        self.set_name_label = tk.Label(
-            center_frame,
-            text="Lade Set-Informationen...",
-            font=('Helvetica', 20),
-            bg='#2b2b2b',
-            fg='#aaaaaa'
-        )
-        self.set_name_label.pack(pady=(0, 40))
-        
-        # Fortschritts-Anzeige (große Zahlen)
-        self.progress_label = tk.Label(
-            center_frame,
-            text="0 / 0",
-            font=('Helvetica', 80, 'bold'),
-            bg='#2b2b2b',
-            fg='#4caf50'
-        )
-        self.progress_label.pack(pady=20)
-        
-        # Text "Teile gefunden"
-        progress_text_label = tk.Label(
-            center_frame,
-            text="Teile gefunden",
-            font=('Helvetica', 24),
-            bg='#2b2b2b',
-            fg='#888888'
-        )
-        progress_text_label.pack(pady=(0, 30))
-        
-        # Prozentanzeige
-        self.percentage_label = tk.Label(
-            center_frame,
-            text="0%",
-            font=('Helvetica', 48, 'bold'),
-            bg='#2b2b2b',
-            fg='#2196f3'
-        )
-        self.percentage_label.pack(pady=20)
-        
-        # Footer mit Hinweisen
-        footer_frame = tk.Frame(self.automation_window, bg='#1e1e1e', height=60)
-        footer_frame.pack(fill='x', side='bottom')
-        footer_frame.pack_propagate(False)
-        
-        hint_label = tk.Label(
-            footer_frame,
-            text="ESC = Beenden  |  Teile werden automatisch erkannt",
-            font=('Helvetica', 14),
-            bg='#1e1e1e',
-            fg='#888888'
-        )
-        hint_label.pack(pady=15)
+
 
     def _update_parts_list(self):
         """Aktualisiert die Fortschrittsanzeige im Automatik-Fenster."""
@@ -1720,44 +1631,45 @@ class AutomationController:
         except Exception as e:
             print(f"Fehler beim Aktualisieren der Anzeige: {e}")
 
-result_label = ttk.Label(frame_result, text="Ergebnisse werden hier angezeigt...", font=("Helvetica", 12))
-result_label.pack()
-
-image_label = ttk.Label(frame_result)
-image_label.pack()
-
-# RGB-Vergleich Anzeige
-rgb_frame = ttk.LabelFrame(frame_result, text="RGB-Vergleich", padding="10")
-rgb_frame.pack(pady=10, fill="x")
-
-# RGB-Werte Anzeige
-rgb_values_label = ttk.Label(rgb_frame, text="RGB-Werte: ---", font=("Helvetica", 10))
-rgb_values_label.pack()
-
-# Visueller Farbvergleich (zwei Farbblöcke nebeneinander)
-color_comparison_label = ttk.Label(rgb_frame)
-color_comparison_label.pack(pady=5)
-
-# RGB-Abstand und Match-Prozent
-rgb_match_label = ttk.Label(rgb_frame, text="RGB-Übereinstimmung: ---", font=("Helvetica", 9))
-rgb_match_label.pack()
-
-# Label für das zuletzt aufgenommene Bild
-last_image_label = ttk.Label(frame_result, text="Letztes aufgenommenes Bild:")
-last_image_label.pack()
-last_photo_label = ttk.Label(frame_result)
-last_photo_label.pack()
-
-button_back = ttk.Button(
-    frame_recognition, text="Zurück zur Startseite", command=show_start_page
+# Start-Button (groß, touch-optimiert)
+start_button = tk.Button(
+    main_container,
+    text="▶ Automatik starten",
+    font=('Helvetica', 28, 'bold'),
+    bg='#4caf50',
+    fg='white',
+    activebackground='#45a049',
+    activeforeground='white',
+    relief='flat',
+    bd=0,
+    padx=50,
+    pady=25,
+    cursor='hand2'
 )
-button_back.pack(pady=10)
+start_button.pack(pady=20)
 
-# Automatik-Controller instanziieren und Button zum Starten hinzufügen
-automation = AutomationController(root)
+# Footer mit Hinweisen
+footer_label = tk.Label(
+    main_container,
+    text="ESC = Beenden  |  Touch-Bedienung optimiert",
+    font=('Helvetica', 14),
+    bg='#1e1e1e',
+    fg='#666666'
+)
+footer_label.pack(side='bottom', pady=10)
 
-automation_button = ttk.Button(frame_controls, text="Automatik starten", command=automation.start)
-automation_button.pack(pady=5)
+# Automatik-Controller instanziieren
+automation = AutomationController(
+    root,
+    progress_frame,
+    progress_label,
+    percentage_label,
+    set_name_label,
+    status_label
+)
+
+# Button-Command zuweisen
+start_button.config(command=automation.start)
 
 # Kamera vorbereiten
 try:
@@ -1778,9 +1690,6 @@ try:
         print("LED-Strip initialisiert (bereit).")
 except Exception as e:
     print(f"LED Init nach Farbtabelle fehlgeschlagen: {e}")
-
-# Starte mit der Startseite
-show_start_page()
 
 # GUI starten
 root.mainloop()
