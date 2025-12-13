@@ -1378,6 +1378,9 @@ class AutomationController:
         self.thread = None
         # Platzhalter: GPIO-Setup (optional)
         self._gpio_initialized = False
+        # Cache für Teile aus ausgewählten Sets (Aggregation)
+        self.set_numbers: list[str] = []
+        self.cached_set_parts: list[dict] = []
 
     def start(self):
         if self.running:
@@ -1402,6 +1405,7 @@ class AutomationController:
         Ein einzelner Schritt der Zustandsmaschine. Hier können später
         Sensorabfragen, Zeitbedingungen und Aktionen eingefügt werden.
         """
+        global current_set_parts
         # Beispielhafte Konsolen-Ausgabe zur Sichtbarkeit
         # print(f"[AUTOMATION] State: {self.state.name}")
 
@@ -1409,23 +1413,124 @@ class AutomationController:
             case AutomationState.INIT:
                 # TODO: Setup, Sensor-Reset, LED-Status, Home-Fahrt
                 self._ensure_gpio()
+                # Sets abfragen (ein oder mehrere, kommasepariert)
+                try:
+                    import tkinter.simpledialog as simpledialog
+                    user_input = simpledialog.askstring(
+                        "Sets wählen",
+                        "Welche Setnummer(n) sollen sortiert werden?\nMehrere mit Komma trennen, z.B. 4723-1,31058",
+                        parent=self.root
+                    )
+                except Exception:
+                    user_input = None
+                if user_input:
+                    # Normalisiere und lade Teilelisten
+                    self.set_numbers = [s.strip() for s in user_input.split(',') if s.strip()]
+                    aggregated_parts = []
+                    for sn in self.set_numbers:
+                        parts = get_parts_from_set(sn)
+                        if parts:
+                            aggregated_parts.extend(parts)
+                    # Optional: Duplikate zusammenführen (gleiche id+color)
+                    merged: dict[tuple, dict] = {}
+                    for p in aggregated_parts:
+                        key = (p.get('id'), p.get('color_name'))
+                        if key in merged:
+                            # Menge aufsummieren, falls numerisch
+                            try:
+                                merged[key]['qty'] = str(int(merged[key]['qty']) + int(str(p.get('qty','0')).strip() or '0'))
+                            except Exception:
+                                pass
+                        else:
+                            merged[key] = p.copy()
+                    self.cached_set_parts = list(merged.values())
+                    # Globale Referenz für bestehende Vergleichslogik aktualisieren
+                    try:
+                        current_set_parts = self.cached_set_parts
+                    except Exception:
+                        pass
+                    # Kurze Info ins GUI
+                    set_info = f"Automatik: {len(self.cached_set_parts)} Teile aus {len(self.set_numbers)} Set(s) geladen"
+                    try:
+                        result_label.config(text=set_info)
+                    except Exception:
+                        pass
+                else:
+                    # Falls keine Eingabe: benutze bereits geladene globale Teile (falls vorhanden)
+                    try:
+                        self.cached_set_parts = current_set_parts or []
+                    except Exception:
+                        self.cached_set_parts = []
                 # Übergang ins Warten
                 self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.WARTEN_AUF_TEIL:
-                # TODO: Auf Eingangssignal vom Raspi lauschen (GPIO)
+                # TODO: ERkennen von Teileinwurf mit Kamera/ Bild änderung
                 # Beispiel (Platzhalter): if self._read_part_present():
                 #     self.state = AutomationState.BILD_AUFNEHMEN
                 pass
 
             case AutomationState.BILD_AUFNEHMEN:
-                # TODO: capture_image(IMAGE_PATH)
-                # Nach dem Bild -> Erkennen
-                self.state = AutomationState.ERKENNEN
+                # Bild aufnehmen; bei Erfolg weiter zur Erkennung, sonst zurück warten
+                result_label.config(text="Automatik: Nehme Bild auf...")
+                clear_image(image_label)
+                clear_rgb_display()
+                if capture_image(IMAGE_PATH):
+                    show_last_captured_image()
+                    self.state = AutomationState.ERKENNEN
+                else:
+                    result_label.config(text="Automatik: Bildaufnahme fehlgeschlagen – warte auf Teil")
+                    self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.ERKENNEN:
-                # TODO: identify_brick(IMAGE_PATH) + Farberkennung verwenden
-                # Nach der Erkennung -> Sortieren
+                # Erkennung durchführen (Brick + Farbe) und GUI aktualisieren
+                result_label.config(text="Automatik: Erkenne Teil...")
+                current_part_id, brick_name, img_url, num_detected, api_response = identify_brick(IMAGE_PATH)
+                color_info = None
+                region = None
+                if api_response and "items" in api_response and api_response["items"]:
+                    best_item = max(api_response["items"], key=lambda x: x.get("score", 0))
+                    for key in ["bbox", "bounding_box", "cage", "region", "box"]:
+                        if key in best_item:
+                            bbox_data = best_item[key]
+                            if isinstance(bbox_data, dict):
+                                if all(k in bbox_data for k in ["x", "y", "width", "height"]):
+                                    region = (bbox_data["x"], bbox_data["y"], bbox_data["width"], bbox_data["height"])
+                            elif isinstance(bbox_data, list) and len(bbox_data) == 4:
+                                region = tuple(bbox_data)
+                            break
+                if region is None:
+                    region = get_center_region_from_image(IMAGE_PATH)
+                if region:
+                    color_info = get_dominant_color_simple(IMAGE_PATH, region)
+                # Ergebnisse anzeigen
+                if current_part_id:
+                    info = f"ID: {current_part_id}\nName: {brick_name}\nErkannte Teile: {num_detected}"
+                    if color_info:
+                        detected_rgb = color_info.get("rgb", (0, 0, 0))
+                        info += f"\nGemessene RGB: {detected_rgb}"
+                        if current_set_parts:
+                            comparison_result = compare_with_bricklink_by_id_and_color(current_part_id, color_info, current_set_parts)
+                            if comparison_result and comparison_result['match_status'] == 'ID_FOUND':
+                                match = comparison_result['primary_match']
+                                set_rgb = match.get('lego_rgb')
+                                rgb_match = match.get('rgb_match_percentage', 0)
+                                set_color_name = match.get('lego_color', '')
+                                update_rgb_comparison_display(detected_rgb, set_rgb, rgb_match, set_color_name)
+                    result_label.config(text=info)
+                    if img_url:
+                        display_image_from_url(img_url, image_label)
+                    else:
+                        clear_image(image_label)
+                else:
+                    result_text = "Automatik: Kein Teil erkannt"
+                    if color_info:
+                        detected_rgb = color_info.get("rgb", (0, 0, 0))
+                        result_text += f"\nGemessene RGB: {detected_rgb}"
+                        update_rgb_comparison_display(detected_rgb)
+                    result_label.config(text=result_text)
+                    clear_image(image_label)
+                # Weiter zum Sortieren
                 self.state = AutomationState.SORTIEREN
 
             case AutomationState.SORTIEREN:
