@@ -1063,12 +1063,6 @@ def get_set_image_url(set_id):
         print(f"Fehler beim Laden des Set-Bildes: {e}")
         return ""
 
-# Beispielaufruf:
-if __name__ == "__main__":
-    setnummer = "4723"
-    teile = get_parts_from_set(setnummer)
-    print("Teile-IDs:", teile)
-
 # --- GUI erstellen ---
 root = tk.Tk()
 root.title("Brick Recognizer")
