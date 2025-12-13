@@ -1201,44 +1201,15 @@ status_label.pack(pady=(0, 20))
 progress_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
 progress_frame.pack_forget()  # Initial versteckt
 
-# Set-Namen Label
-set_name_label = tk.Label(
+# Aktueller Status während Sortierung
+current_status_label = tk.Label(
     progress_frame,
-    text="",
-    font=('Helvetica', 22),
-    bg='#2b2b2b',
-    fg='#aaaaaa'
-)
-set_name_label.pack(pady=(20, 10))
-
-# Fortschritts-Zahlen (groß)
-progress_label = tk.Label(
-    progress_frame,
-    text="0 / 0",
-    font=('Helvetica', 72, 'bold'),
-    bg='#2b2b2b',
-    fg='#4caf50'
-)
-progress_label.pack(pady=15)
-
-progress_text_label = tk.Label(
-    progress_frame,
-    text="Teile gefunden",
-    font=('Helvetica', 20),
-    bg='#2b2b2b',
-    fg='#888888'
-)
-progress_text_label.pack(pady=(0, 20))
-
-# Prozentanzeige
-percentage_label = tk.Label(
-    progress_frame,
-    text="0%",
-    font=('Helvetica', 48, 'bold'),
+    text="Sortierung läuft...",
+    font=('Helvetica', 28, 'bold'),
     bg='#2b2b2b',
     fg='#2196f3'
 )
-percentage_label.pack(pady=15)
+current_status_label.pack(pady=(30, 20))
 
 # Steuerungs-Buttons (Pause/Stop)
 control_buttons_frame = tk.Frame(progress_frame, bg='#2b2b2b')
@@ -1477,7 +1448,7 @@ class AutomationController:
     Keine Logik implementiert – nur die Struktur und Hooks.
     """
 
-    def __init__(self, tk_root: tk.Tk, progress_frame, progress_lbl, percentage_lbl, set_name_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn):
+    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn):
         self.root = tk_root
         self.state = AutomationState.INIT
         self.running = False
@@ -1489,13 +1460,12 @@ class AutomationController:
         self.set_numbers: list[str] = []
         self.cached_set_parts: list[dict] = []
         self.loaded_sets_info: list[dict] = []  # Info über geladene Sets
-        # Tracking für gefundene Teile: key=(part_id, color_name), value=gefundene_anzahl
-        self.found_parts: dict[tuple, int] = {}
+        # Tracking für gefundene Teile pro Set: dict[set_number, dict[(part_id, color_name), count]]
+        self.found_parts_per_set: dict[str, dict[tuple, int]] = {}
+        self.parts_per_set: dict[str, list[dict]] = {}  # Original-Teile pro Set
         # GUI-Referenzen
         self.progress_frame = progress_frame
-        self.progress_label = progress_lbl
-        self.percentage_label = percentage_lbl
-        self.set_name_label = set_name_lbl
+        self.current_status_label = current_status_lbl
         self.status_label = status_lbl
         self.set_info_frame = set_info_frame
         self.set_info_label = set_info_lbl
@@ -1544,6 +1514,13 @@ class AutomationController:
                 set_img_url = get_set_image_url(sn)
                 
                 self.set_numbers.append(sn)
+                
+                # Speichere Teile pro Set (vor Aggregation)
+                self.parts_per_set[sn] = parts.copy()
+                
+                # Initialisiere Tracking für dieses Set
+                self.found_parts_per_set[sn] = {}
+                
                 # Speichere Set-Info
                 total_qty = sum(int(p.get('qty', '1')) for p in parts)
                 self.loaded_sets_info.append({
@@ -1624,7 +1601,8 @@ class AutomationController:
         self.set_numbers = []
         self.cached_set_parts = []
         self.loaded_sets_info = []
-        self.found_parts = {}
+        self.found_parts_per_set = {}
+        self.parts_per_set = {}
         
         # Lösche Set-Bilder
         for label in self.set_image_labels:
@@ -1659,8 +1637,9 @@ class AutomationController:
         self.status_label.config(text="Automatik läuft...", fg='#2196f3')
         
         # Tracking zurücksetzen
-        self.found_parts = {}
-        self._update_parts_list()
+        for set_num in self.set_numbers:
+            self.found_parts_per_set[set_num] = {}
+        self._update_set_info_display()
         
         # Nicht den Tk-Hauptthread blockieren: separater Thread
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -1767,14 +1746,21 @@ class AutomationController:
                             comparison_result = compare_with_bricklink_by_id_and_color(current_part_id, color_info, current_set_parts)
                             if comparison_result and comparison_result['match_status'] == 'ID_FOUND':
                                 match = comparison_result['primary_match']
-                                set_rgb = match.get('lego_rgb')
-                                rgb_match = match.get('rgb_match_percentage', 0)
-                                set_color_name = match.get('lego_color', '')
-                                update_rgb_comparison_display(detected_rgb, set_rgb, rgb_match, set_color_name)
-                                # Tracking: Markiere Teil als gefunden
+                                # Finde heraus, zu welchem Set dieses Teil gehört
                                 part_key = (current_part_id, match.get('bricklink_color', ''))
-                                self.found_parts[part_key] = self.found_parts.get(part_key, 0) + 1
-                                self._update_parts_list()
+                                
+                                for set_num in self.set_numbers:
+                                    if set_num in self.parts_per_set:
+                                        # Prüfe ob Teil in diesem Set ist
+                                        for part in self.parts_per_set[set_num]:
+                                            if (part.get('id'), part.get('color_name')) == part_key:
+                                                # Teil gehört zu diesem Set
+                                                self.found_parts_per_set[set_num][part_key] = self.found_parts_per_set[set_num].get(part_key, 0) + 1
+                                                self.current_status_label.config(text=f"✓ Teil erkannt: {current_part_id}", fg='#4caf50')
+                                                break
+                                
+                                # Aktualisiere Set-Info-Anzeige mit neuem Fortschritt
+                                self._update_set_info_display()
                     result_label.config(text=info)
                     if img_url:
                         display_image_from_url(img_url, image_label)
@@ -1828,51 +1814,7 @@ class AutomationController:
 
 
 
-    def _update_parts_list(self):
-        """Aktualisiert die Fortschrittsanzeige im Automatik-Fenster."""
-        if not self.progress_label or not self.percentage_label:
-            return
-        
-        if not self.cached_set_parts:
-            return
-        
-        # Berechne Gesamtanzahl benötigter Teile (mit Mehrfachzählung)
-        total_needed = 0
-        for part in self.cached_set_parts:
-            try:
-                qty = int(part.get('qty', '1'))
-                total_needed += qty
-            except Exception:
-                total_needed += 1
-        
-        # Zähle gefundene Teile (Summe aller gefundenen)
-        total_found = sum(self.found_parts.values())
-        
-        # Berechne Prozentsatz
-        percentage = int((total_found / total_needed * 100)) if total_needed > 0 else 0
-        
-        # Aktualisiere Labels
-        try:
-            self.progress_label.config(text=f"{total_found} / {total_needed}")
-            self.percentage_label.config(text=f"{percentage}%")
-            
-            # Farbe ändern je nach Fortschritt
-            if percentage == 100:
-                self.progress_label.config(fg='#4caf50')  # Grün
-                self.percentage_label.config(fg='#4caf50')
-            elif percentage > 0:
-                self.progress_label.config(fg='#2196f3')  # Blau
-                self.percentage_label.config(fg='#2196f3')
-            else:
-                self.progress_label.config(fg='#888888')  # Grau
-                self.percentage_label.config(fg='#888888')
-            
-            # Set-Namen aktualisieren (nur beim ersten Mal)
-            if self.set_name_label and self.set_numbers:
-                set_text = f"Set(s): {', '.join(self.set_numbers)}"
-                self.set_name_label.config(text=set_text)
-        except Exception as e:
-            print(f"Fehler beim Aktualisieren der Anzeige: {e}")
+
 
 # Start-Button (groß, touch-optimiert)
 start_button = tk.Button(
@@ -1905,9 +1847,7 @@ footer_label.pack(side='bottom', pady=10)
 automation = AutomationController(
     root,
     progress_frame,
-    progress_label,
-    percentage_label,
-    set_name_label,
+    current_status_label,
     status_label,
     set_info_frame,
     set_info_label,
