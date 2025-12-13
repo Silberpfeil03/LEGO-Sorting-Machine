@@ -1,0 +1,21 @@
+Name,R,G,B,ID,Hex
+White,242,243,242,1,#F2F3F2
+Brick Yellow,245,205,48,3,#F5CD30
+Bright Red,196,40,28,5,#C4281C
+Bright Blue,13,105,171,23,#0D69AB
+Bright Yellow,245,205,48,24,#F5CD30
+Black,27,42,52,26,#1B2A34
+Dark Green,40,127,70,28,#287F46
+Earth Orange,160,95,52,29,#A05F34
+Bright Orange,218,133,65,106,#DA8541
+Bright Purple,129,43,157,124,#812B9D
+Medium Stone Grey,156,163,168,194,#9CA3A8
+Dark Stone Grey,99,95,97,199,#635F61
+Light Stone Grey,228,228,218,208,#E4E4DA
+Dark Red,114,22,17,154,#721611
+Medium Blue,97,175,255,42,#61AFFF
+Bright Green,75,151,74,37,#4B974A
+Sand Yellow,149,138,115,138,#958A73
+Dark Orange,160,95,52,38,#A05F34
+Light Bluish Gray,156,163,168,503,#9CA3A8
+Dark Bluish Gray,99,95,97,85,#635F61
