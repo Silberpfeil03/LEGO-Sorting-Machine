@@ -1211,6 +1211,23 @@ current_status_label = tk.Label(
 )
 current_status_label.pack(pady=(30, 20))
 
+# Scrollable Canvas für Set-Fortschritt
+progress_canvas_frame = tk.Frame(progress_frame, bg='#2b2b2b')
+progress_canvas_frame.pack(fill='both', expand=True, padx=20, pady=10)
+
+progress_canvas = tk.Canvas(
+    progress_canvas_frame,
+    bg='#2b2b2b',
+    highlightthickness=0,
+    height=200
+)
+progress_canvas.pack(fill='both', expand=True)
+
+# Frame für die Set-Progress-Widgets
+sets_progress_frame = tk.Frame(progress_canvas, bg='#2b2b2b')
+progress_canvas.create_window((0, 0), window=sets_progress_frame, anchor='nw')
+sets_progress_frame.bind('<Configure>', lambda e: progress_canvas.configure(scrollregion=progress_canvas.bbox('all')))
+
 # Steuerungs-Buttons (Pause/Stop)
 control_buttons_frame = tk.Frame(progress_frame, bg='#2b2b2b')
 control_buttons_frame.pack(pady=(20, 15))
@@ -1448,7 +1465,7 @@ class AutomationController:
     Keine Logik implementiert – nur die Struktur und Hooks.
     """
 
-    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn):
+    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn, sets_progress_frame_ref):
         self.root = tk_root
         self.state = AutomationState.INIT
         self.running = False
@@ -1470,10 +1487,13 @@ class AutomationController:
         self.set_info_frame = set_info_frame
         self.set_info_label = set_info_lbl
         self.set_images_container = set_images_container
+        self.sets_progress_frame = sets_progress_frame_ref
         self.set_image_labels: list[tk.Label] = []  # Liste der Bild-Labels
         self.start_button = start_btn
         self.pause_button = pause_btn
         self.stop_button = stop_btn
+        self.progress_bars: dict[str, tk.Canvas] = {}  # Fortschrittsbalken pro Set
+        self.progress_labels: dict[str, tk.Label] = {}  # Labels pro Set
 
     def load_sets(self):
         """Lädt Sets aus dem Eingabefeld und zeigt Informationen an."""
@@ -1553,17 +1573,7 @@ class AutomationController:
         
         # Zeige Set-Informationen
         if self.loaded_sets_info:
-            info_text = ""
-            for idx, set_info in enumerate(self.loaded_sets_info, 1):
-                set_display_name = set_info['set_name'] if set_info['set_name'] else f"Set {set_info['set_number']}"
-                info_text += f"{idx}. {set_display_name}\n"
-                info_text += f"   {set_info['part_count']} verschiedene Teile, {set_info['total_qty']} gesamt\n\n"
-            
-            total_parts = len(self.cached_set_parts)
-            total_qty = sum(int(p.get('qty', '1')) for p in self.cached_set_parts)
-            info_text += f"✓ Gesamt: {total_parts} verschiedene Teile, {total_qty} Stück"
-            
-            self.set_info_label.config(text=info_text)
+            self._update_set_info_display()
             
             # Zeige Set-Bilder
             self._update_set_images()
@@ -1596,6 +1606,117 @@ class AutomationController:
                 except Exception as e:
                     print(f"Fehler beim Laden des Set-Bildes: {e}")
     
+    def _update_set_info_display(self):
+        """Aktualisiert die Set-Info-Anzeige mit Fortschritt."""
+        info_text = ""
+        for idx, set_info in enumerate(self.loaded_sets_info, 1):
+            set_num = set_info['set_number']
+            set_display_name = set_info['set_name'] if set_info['set_name'] else f"Set {set_num}"
+            
+            # Berechne Fortschritt für dieses Set
+            if set_num in self.parts_per_set:
+                total_qty = sum(int(p.get('qty', '1')) for p in self.parts_per_set[set_num])
+                found_qty = sum(self.found_parts_per_set.get(set_num, {}).values())
+                percentage = int((found_qty / total_qty * 100)) if total_qty > 0 else 0
+                
+                if percentage == 100:
+                    progress_icon = "✓"
+                elif percentage > 0:
+                    progress_icon = "▶"
+                else:
+                    progress_icon = "○"
+                
+                info_text += f"{idx}. {set_display_name}\n"
+                info_text += f"   {progress_icon} {found_qty}/{total_qty} Teile ({percentage}%)\n\n"
+            else:
+                info_text += f"{idx}. {set_display_name}\n"
+                info_text += f"   {set_info['part_count']} verschiedene Teile, {set_info['total_qty']} gesamt\n\n"
+        
+        self.set_info_label.config(text=info_text)
+    
+    def _create_progress_visualizations(self):
+        """Erstellt Fortschrittsbalken für jedes geladene Set."""
+        for widget in self.sets_progress_frame.winfo_children():
+            widget.destroy()
+        self.progress_bars.clear()
+        self.progress_labels.clear()
+        
+        for set_num in self.set_numbers:
+            set_info = next((s for s in self.loaded_sets_info if s['set_number'] == set_num), None)
+            if not set_info:
+                continue
+            
+            set_display_name = set_info['set_name'] if set_info['set_name'] else f"Set {set_num}"
+            
+            set_container = tk.Frame(self.sets_progress_frame, bg='#2b2b2b')
+            set_container.pack(fill='x', pady=(10, 5), padx=10)
+            
+            name_label = tk.Label(
+                set_container,
+                text=set_display_name,
+                font=('Helvetica', 14, 'bold'),
+                bg='#2b2b2b',
+                fg='white'
+            )
+            name_label.pack(anchor='w')
+            
+            bar_container = tk.Frame(set_container, bg='#1a1a1a', relief='flat', bd=1, height=30)
+            bar_container.pack(fill='x', pady=(5, 0))
+            bar_container.pack_propagate(False)
+            
+            progress_bar = tk.Canvas(
+                bar_container,
+                bg='#1a1a1a',
+                highlightthickness=0,
+                height=30
+            )
+            progress_bar.pack(fill='both', expand=True, padx=2, pady=2)
+            self.progress_bars[set_num] = progress_bar
+            
+            progress_text = tk.Label(
+                set_container,
+                text="0% (0/0)",
+                font=('Helvetica', 12),
+                bg='#2b2b2b',
+                fg='#888888'
+            )
+            progress_text.pack(anchor='w', pady=(2, 0))
+            self.progress_labels[set_num] = progress_text
+    
+    def _update_progress_visualization(self):
+        """Aktualisiert die Fortschrittsbalken für alle Sets."""
+        for set_num in self.set_numbers:
+            if set_num not in self.parts_per_set:
+                continue
+            
+            total_qty = sum(int(p.get('qty', '1')) for p in self.parts_per_set[set_num])
+            found_qty = sum(self.found_parts_per_set.get(set_num, {}).values())
+            percentage = int((found_qty / total_qty * 100)) if total_qty > 0 else 0
+            
+            if set_num in self.progress_bars:
+                bar = self.progress_bars[set_num]
+                bar.delete('all')
+                
+                bar_width = bar.winfo_width() if bar.winfo_width() > 1 else 300
+                bar_height = bar.winfo_height() if bar.winfo_height() > 1 else 30
+                bar.create_rectangle(0, 0, bar_width, bar_height, fill='#333333', outline='')
+                
+                if percentage == 100:
+                    color = '#4caf50'
+                elif percentage >= 50:
+                    color = '#2196f3'
+                elif percentage > 0:
+                    color = '#ff9800'
+                else:
+                    color = '#555555'
+                
+                filled_width = (percentage / 100) * (bar_width - 4)
+                bar.create_rectangle(2, 2, 2 + filled_width, bar_height - 2, fill=color, outline='')
+                bar.create_text(bar_width / 2, bar_height / 2, text=f"{percentage}%", fill='white', font=('Helvetica', 12, 'bold'))
+            
+            if set_num in self.progress_labels:
+                self.progress_labels[set_num].config(text=f"{percentage}% ({found_qty}/{total_qty})")
+
     def clear_sets(self):
         """Löscht alle geladenen Sets."""
         self.set_numbers = []
@@ -1639,7 +1760,10 @@ class AutomationController:
         # Tracking zurücksetzen
         for set_num in self.set_numbers:
             self.found_parts_per_set[set_num] = {}
-        self._update_set_info_display()
+        
+        # Erstelle Fortschrittsbalken-Visualisierung
+        self._create_progress_visualizations()
+        self._update_progress_visualization()
         
         # Nicht den Tk-Hauptthread blockieren: separater Thread
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -1761,6 +1885,8 @@ class AutomationController:
                                 
                                 # Aktualisiere Set-Info-Anzeige mit neuem Fortschritt
                                 self._update_set_info_display()
+                                # Aktualisiere Fortschritts-Visualisierung
+                                self._update_progress_visualization()
                     result_label.config(text=info)
                     if img_url:
                         display_image_from_url(img_url, image_label)
@@ -1854,7 +1980,8 @@ automation = AutomationController(
     set_images_container,
     start_button,
     pause_button,
-    stop_button
+    stop_button,
+    sets_progress_frame
 )
 
 # Button-Commands zuweisen
