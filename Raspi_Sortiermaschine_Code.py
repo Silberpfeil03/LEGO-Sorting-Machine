@@ -1381,18 +1381,34 @@ class AutomationController:
         # Cache für Teile aus ausgewählten Sets (Aggregation)
         self.set_numbers: list[str] = []
         self.cached_set_parts: list[dict] = []
+        # Tracking für gefundene Teile: key=(part_id, color_name), value=gefundene_anzahl
+        self.found_parts: dict[tuple, int] = {}
+        # Automatik-Fenster
+        self.automation_window = None
+        self.progress_label = None
+        self.percentage_label = None
+        self.set_name_label = None
 
     def start(self):
         if self.running:
             return
         self.running = True
         self.state = AutomationState.INIT
+        # Erstelle Automatik-Fenster
+        self._create_automation_window()
         # Nicht den Tk-Hauptthread blockieren: separater Thread
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
 
     def stop(self):
         self.running = False
+        # Schließe Automatik-Fenster
+        if self.automation_window:
+            try:
+                self.automation_window.destroy()
+            except Exception:
+                pass
+            self.automation_window = None
 
     def _run_loop(self):
         """Hauptschleife der Automatik. Ruft periodisch tick() auf."""
@@ -1455,6 +1471,9 @@ class AutomationController:
                         result_label.config(text=set_info)
                     except Exception:
                         pass
+                    # Initialisiere Tracking und zeige Teileliste
+                    self.found_parts = {}
+                    self._update_parts_list()
                 else:
                     # Falls keine Eingabe: benutze bereits geladene globale Teile (falls vorhanden)
                     try:
@@ -1517,6 +1536,10 @@ class AutomationController:
                                 rgb_match = match.get('rgb_match_percentage', 0)
                                 set_color_name = match.get('lego_color', '')
                                 update_rgb_comparison_display(detected_rgb, set_rgb, rgb_match, set_color_name)
+                                # Tracking: Markiere Teil als gefunden
+                                part_key = (current_part_id, match.get('bricklink_color', ''))
+                                self.found_parts[part_key] = self.found_parts.get(part_key, 0) + 1
+                                self._update_parts_list()
                     result_label.config(text=info)
                     if img_url:
                         display_image_from_url(img_url, image_label)
@@ -1567,6 +1590,141 @@ class AutomationController:
         """
         # Beispiel: return GPIO.input(23) == GPIO.LOW
         return False
+
+    def _create_automation_window(self):
+        """Erstellt das Fullscreen-Fenster für den Automatik-Modus."""
+        if self.automation_window:
+            return
+        
+        self.automation_window = tk.Toplevel(self.root)
+        self.automation_window.title("Automatik-Sortierung")
+        self.automation_window.attributes('-fullscreen', True)
+        self.automation_window.configure(bg='#2b2b2b')
+        
+        # Escape-Taste zum Beenden
+        self.automation_window.bind('<Escape>', lambda e: self.stop())
+        
+        # Header
+        header_frame = tk.Frame(self.automation_window, bg='#1e1e1e', height=100)
+        header_frame.pack(fill='x', side='top')
+        header_frame.pack_propagate(False)
+        
+        title_label = tk.Label(
+            header_frame,
+            text="🔧 Automatische Sortierung",
+            font=('Helvetica', 32, 'bold'),
+            bg='#1e1e1e',
+            fg='white'
+        )
+        title_label.pack(pady=25)
+        
+        # Hauptbereich zentriert
+        main_frame = tk.Frame(self.automation_window, bg='#2b2b2b')
+        main_frame.pack(fill='both', expand=True)
+        
+        # Zentrierter Content
+        center_frame = tk.Frame(main_frame, bg='#2b2b2b')
+        center_frame.place(relx=0.5, rely=0.5, anchor='center')
+        
+        # Set-Name
+        self.set_name_label = tk.Label(
+            center_frame,
+            text="Lade Set-Informationen...",
+            font=('Helvetica', 20),
+            bg='#2b2b2b',
+            fg='#aaaaaa'
+        )
+        self.set_name_label.pack(pady=(0, 40))
+        
+        # Fortschritts-Anzeige (große Zahlen)
+        self.progress_label = tk.Label(
+            center_frame,
+            text="0 / 0",
+            font=('Helvetica', 80, 'bold'),
+            bg='#2b2b2b',
+            fg='#4caf50'
+        )
+        self.progress_label.pack(pady=20)
+        
+        # Text "Teile gefunden"
+        progress_text_label = tk.Label(
+            center_frame,
+            text="Teile gefunden",
+            font=('Helvetica', 24),
+            bg='#2b2b2b',
+            fg='#888888'
+        )
+        progress_text_label.pack(pady=(0, 30))
+        
+        # Prozentanzeige
+        self.percentage_label = tk.Label(
+            center_frame,
+            text="0%",
+            font=('Helvetica', 48, 'bold'),
+            bg='#2b2b2b',
+            fg='#2196f3'
+        )
+        self.percentage_label.pack(pady=20)
+        
+        # Footer mit Hinweisen
+        footer_frame = tk.Frame(self.automation_window, bg='#1e1e1e', height=60)
+        footer_frame.pack(fill='x', side='bottom')
+        footer_frame.pack_propagate(False)
+        
+        hint_label = tk.Label(
+            footer_frame,
+            text="ESC = Beenden  |  Teile werden automatisch erkannt",
+            font=('Helvetica', 14),
+            bg='#1e1e1e',
+            fg='#888888'
+        )
+        hint_label.pack(pady=15)
+
+    def _update_parts_list(self):
+        """Aktualisiert die Fortschrittsanzeige im Automatik-Fenster."""
+        if not self.progress_label or not self.percentage_label:
+            return
+        
+        if not self.cached_set_parts:
+            return
+        
+        # Berechne Gesamtanzahl benötigter Teile (mit Mehrfachzählung)
+        total_needed = 0
+        for part in self.cached_set_parts:
+            try:
+                qty = int(part.get('qty', '1'))
+                total_needed += qty
+            except Exception:
+                total_needed += 1
+        
+        # Zähle gefundene Teile (Summe aller gefundenen)
+        total_found = sum(self.found_parts.values())
+        
+        # Berechne Prozentsatz
+        percentage = int((total_found / total_needed * 100)) if total_needed > 0 else 0
+        
+        # Aktualisiere Labels
+        try:
+            self.progress_label.config(text=f"{total_found} / {total_needed}")
+            self.percentage_label.config(text=f"{percentage}%")
+            
+            # Farbe ändern je nach Fortschritt
+            if percentage == 100:
+                self.progress_label.config(fg='#4caf50')  # Grün
+                self.percentage_label.config(fg='#4caf50')
+            elif percentage > 0:
+                self.progress_label.config(fg='#2196f3')  # Blau
+                self.percentage_label.config(fg='#2196f3')
+            else:
+                self.progress_label.config(fg='#888888')  # Grau
+                self.percentage_label.config(fg='#888888')
+            
+            # Set-Namen aktualisieren (nur beim ersten Mal)
+            if self.set_name_label and self.set_numbers:
+                set_text = f"Set(s): {', '.join(self.set_numbers)}"
+                self.set_name_label.config(text=set_text)
+        except Exception as e:
+            print(f"Fehler beim Aktualisieren der Anzeige: {e}")
 
 result_label = ttk.Label(frame_result, text="Ergebnisse werden hier angezeigt...", font=("Helvetica", 12))
 result_label.pack()
