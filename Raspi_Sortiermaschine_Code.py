@@ -1110,6 +1110,202 @@ entry_set_number = tk.Entry(
 )
 entry_set_number.pack(pady=(0, 10), padx=20, ipady=15)
 
+# Variable für Touch-Tastatur
+touch_keyboard_popup = None
+
+def show_numeric_keyboard():
+    """Zeigt eine Touch-Tastatur für Zahleneingabe an."""
+    global touch_keyboard_popup
+    
+    # Wenn Tastatur bereits offen, nicht öffnen
+    if touch_keyboard_popup is not None and touch_keyboard_popup.winfo_exists():
+        touch_keyboard_popup.lift()
+        return
+    
+    # Erstelle Popup-Fenster
+    touch_keyboard_popup = tk.Toplevel(root)
+    touch_keyboard_popup.title("Setnummer eingeben")
+    touch_keyboard_popup.geometry("600x420")
+    touch_keyboard_popup.config(bg='#1e1e1e')
+    
+    # Positioniere über dem Eingabefeld (relativ zu Root-Fenster)
+    try:
+        x = root.winfo_x() + (root.winfo_width() // 2) - 300
+        y = root.winfo_y() + 250
+        touch_keyboard_popup.geometry(f"600x420+{x}+{y}")
+    except:
+        pass
+    
+    # Mache Fenster "always on top"
+    touch_keyboard_popup.attributes('-topmost', True)
+    
+    # Setze als transitentes Fenster relativ zum Hauptfenster
+    touch_keyboard_popup.transient(root)
+    
+    # Titel-Label
+    title_label = tk.Label(
+        touch_keyboard_popup,
+        text="Setnummer eingeben (z.B. 4723-1,31058)",
+        font=('Helvetica', 14, 'bold'),
+        bg='#1e1e1e',
+        fg='white'
+    )
+    title_label.pack(pady=10)
+    
+    # Display für aktuelle Eingabe (Live-Anzeige)
+    display_frame = tk.Frame(touch_keyboard_popup, bg='#2b2b2b', relief='flat', bd=2)
+    display_frame.pack(fill='x', padx=10, pady=(0, 15))
+    
+    display_label = tk.Label(
+        display_frame,
+        textvariable=set_number,
+        font=('Helvetica', 20, 'bold'),
+        bg='#2b2b2b',
+        fg='#4caf50',
+        height=2,
+        relief='flat'
+    )
+    display_label.pack(fill='both', expand=True, padx=10, pady=10)
+    
+    # Tastatur-Frame
+    keyboard_frame = tk.Frame(touch_keyboard_popup, bg='#1e1e1e')
+    keyboard_frame.pack(fill='both', expand=True, padx=10, pady=10)
+    
+    # Tastenlayout (ähnlich wie Handy-Numpad)
+    button_layout = [
+        ['1', '2', '3'],
+        ['4', '5', '6'],
+        ['7', '8', '9'],
+        ['0', ',', '⌫'],
+    ]
+    
+    def add_to_entry(char):
+        """Fügt Zeichen zum Eingabefeld hinzu."""
+        print(f"Button geklickt: {char}")  # Debug
+        try:
+            if char == '⌫':  # Backspace
+                current = set_number.get()
+                set_number.set(current[:-1])
+                print(f"Backspace: '{current}' -> '{current[:-1]}'")
+            else:
+                new_value = set_number.get() + char
+                set_number.set(new_value)
+                print(f"Hinzugefügt: '{char}' -> '{new_value}'")
+        except Exception as e:
+            print(f"Fehler in add_to_entry: {e}")
+    
+    def close_keyboard():
+        """Schließt die Tastatur."""
+        print("Fertig-Button geklickt")
+        try:
+            global touch_keyboard_popup
+            if touch_keyboard_popup:
+                touch_keyboard_popup.grab_release()  # Event-Grab freigeben
+                touch_keyboard_popup.destroy()
+                touch_keyboard_popup = None
+        except Exception as e:
+            print(f"Fehler beim Schließen: {e}")
+    
+    def clear_entry():
+        """Löscht die komplette Eingabe."""
+        print("Löschen-Button geklickt")
+        try:
+            set_number.set("")
+        except Exception as e:
+            print(f"Fehler beim Löschen: {e}")
+    
+    # Erstelle Buttons - WICHTIG: Buttons in Liste speichern damit sie nicht gelöscht werden
+    buttons = []
+    for row_idx, row in enumerate(button_layout):
+        row_frame = tk.Frame(keyboard_frame, bg='#1e1e1e')
+        row_frame.pack(fill='both', expand=True, pady=5)
+        
+        for col_idx, char in enumerate(row):
+            # Farben für verschiedene Button-Typen
+            if char == '⌫':
+                bg_color = '#ff5722'  # Rot für Backspace
+                active_bg = '#d84315'
+            elif char == ',':
+                bg_color = '#ff9800'  # Orange für Komma
+                active_bg = '#f57c00'
+            else:
+                bg_color = '#2196f3'  # Blau für Ziffern
+                active_bg = '#1976d2'
+            
+            btn = tk.Button(
+                row_frame,
+                text=char,
+                font=('Helvetica', 22, 'bold'),
+                bg=bg_color,
+                fg='white',
+                activebackground=active_bg,
+                activeforeground='white',
+                relief='flat',
+                bd=0,
+                cursor='hand2'
+            )
+            # Setze Command nach Erstellung mit functools.partial
+            import functools
+            btn.config(command=functools.partial(add_to_entry, char))
+            btn.pack(side='left', fill='both', expand=True, padx=3)
+            buttons.append(btn)  # Referenz behalten
+    
+    # Bottom-Button Frame
+    bottom_frame = tk.Frame(touch_keyboard_popup, bg='#1e1e1e')
+    bottom_frame.pack(fill='x', padx=10, pady=(10, 10))
+    
+    # Clear-Button (links)
+    clear_btn = tk.Button(
+        bottom_frame,
+        text="⊘ Löschen",
+        font=('Helvetica', 14, 'bold'),
+        bg='#d32f2f',
+        fg='white',
+        activebackground='#c62828',
+        activeforeground='white',
+        relief='flat',
+        bd=0,
+        command=clear_entry,
+        cursor='hand2'
+    )
+    clear_btn.pack(side='left', fill='both', expand=True, padx=3)
+    
+    # OK-Button (rechts)
+    ok_button = tk.Button(
+        bottom_frame,
+        text="✓ Fertig",
+        font=('Helvetica', 14, 'bold'),
+        bg='#4caf50',
+        fg='white',
+        activebackground='#388e3c',
+        activeforeground='white',
+        relief='flat',
+        bd=0,
+        command=close_keyboard,
+        cursor='hand2'
+    )
+    ok_button.pack(side='left', fill='both', expand=True, padx=3)
+    
+    # Wenn Fenster geschlossen wird
+    def on_close():
+        global touch_keyboard_popup
+        try:
+            if touch_keyboard_popup:
+                touch_keyboard_popup.grab_release()  # Event-Grab freigeben
+        except:
+            pass
+        touch_keyboard_popup = None
+    
+    touch_keyboard_popup.protocol("WM_DELETE_WINDOW", lambda: (on_close(), touch_keyboard_popup.destroy() if touch_keyboard_popup else None))
+    
+    # JETZT erst Events abfangen und Fokus setzen (nachdem alle Widgets erstellt sind)
+    touch_keyboard_popup.update_idletasks()  # Stelle sicher, dass alles gerendert ist
+    touch_keyboard_popup.grab_set()  # Fange alle Events ab
+    touch_keyboard_popup.focus_force()  # Fokus setzen
+
+# Bind Klick auf Entry-Feld zum Zeigen der Tastatur
+entry_set_number.bind('<Button-1>', lambda e: show_numeric_keyboard())
+
 set_hint_label = tk.Label(
     set_input_frame,
     text="Mehrere Sets mit Komma trennen (z.B. 4723-1,31058)",
