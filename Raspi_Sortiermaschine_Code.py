@@ -1067,35 +1067,35 @@ root.configure(bg='#1e1e1e')
 # ESC zum Beenden
 root.bind('<Escape>', lambda e: root.quit())
 
-# Hauptcontainer
+# Hauptcontainer (reduzierte Paddings für 7-Zoll Display)
 main_container = tk.Frame(root, bg='#1e1e1e')
-main_container.pack(fill='both', expand=True, padx=20, pady=20)
+main_container.pack(fill='both', expand=True, padx=10, pady=10)
 
-# Header
+# Header (kompakter)
 header_frame = tk.Frame(main_container, bg='#1e1e1e')
-header_frame.pack(fill='x', pady=(0, 30))
+header_frame.pack(fill='x', pady=(0, 10))
 
 title_label = tk.Label(
     header_frame,
     text="🧱 LEGO Sortiermaschine",
-    font=('Helvetica', 42, 'bold'),
+    font=('Helvetica', 24, 'bold'),
     bg='#1e1e1e',
     fg='white'
 )
 title_label.pack()
 
-# Set-Eingabe Bereich
+# Set-Eingabe Bereich (kompakter)
 set_input_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
-set_input_frame.pack(fill='x', pady=(0, 20))
+set_input_frame.pack(fill='x', pady=(0, 10))
 
 set_label = tk.Label(
     set_input_frame,
     text="Setnummer(n) eingeben:",
-    font=('Helvetica', 20),
+    font=('Helvetica', 16),
     bg='#2b2b2b',
     fg='white'
 )
-set_label.pack(pady=(15, 10))
+set_label.pack(pady=(8, 5))
 
 set_number = tk.StringVar(root)
 entry_set_number = tk.Entry(
@@ -1397,25 +1397,25 @@ status_label.pack(pady=(0, 20))
 progress_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
 progress_frame.pack_forget()  # Initial versteckt
 
-# Aktueller Status während Sortierung
+# Aktueller Status während Sortierung (kleiner)
 current_status_label = tk.Label(
     progress_frame,
     text="Sortierung läuft...",
-    font=('Helvetica', 28, 'bold'),
+    font=('Helvetica', 18, 'bold'),
     bg='#2b2b2b',
     fg='#2196f3'
 )
-current_status_label.pack(pady=(30, 20))
+current_status_label.pack(pady=(10, 8))
 
-# Scrollable Canvas für Set-Fortschritt
+# Scrollable Canvas für Set-Fortschritt (reduzierte Höhe für 7-Zoll)
 progress_canvas_frame = tk.Frame(progress_frame, bg='#2b2b2b')
-progress_canvas_frame.pack(fill='both', expand=True, padx=20, pady=10)
+progress_canvas_frame.pack(fill='both', expand=True, padx=10, pady=5)
 
 progress_canvas = tk.Canvas(
     progress_canvas_frame,
     bg='#2b2b2b',
     highlightthickness=0,
-    height=200
+    height=150
 )
 progress_canvas.pack(fill='both', expand=True)
 
@@ -1424,41 +1424,41 @@ sets_progress_frame = tk.Frame(progress_canvas, bg='#2b2b2b')
 progress_canvas.create_window((0, 0), window=sets_progress_frame, anchor='nw')
 sets_progress_frame.bind('<Configure>', lambda e: progress_canvas.configure(scrollregion=progress_canvas.bbox('all')))
 
-# Steuerungs-Buttons (Pause/Stop)
+# Steuerungs-Buttons (Pause/Stop) - kompakter
 control_buttons_frame = tk.Frame(progress_frame, bg='#2b2b2b')
-control_buttons_frame.pack(pady=(20, 15))
+control_buttons_frame.pack(pady=(8, 8))
 
 pause_button = tk.Button(
     control_buttons_frame,
     text="⏸ Pause",
-    font=('Helvetica', 20, 'bold'),
+    font=('Helvetica', 16, 'bold'),
     bg='#ff9800',
     fg='white',
     activebackground='#f57c00',
     activeforeground='white',
     relief='flat',
     bd=0,
-    padx=40,
-    pady=15,
+    padx=20,
+    pady=8,
     cursor='hand2'
 )
-pause_button.pack(side='left', padx=10)
+pause_button.pack(side='left', padx=5)
 
 stop_button = tk.Button(
     control_buttons_frame,
-    text="⏹ Stoppen",
-    font=('Helvetica', 20, 'bold'),
+    text="⏹ Stop",
+    font=('Helvetica', 16, 'bold'),
     bg='#f44336',
     fg='white',
     activebackground='#d32f2f',
     activeforeground='white',
     relief='flat',
     bd=0,
-    padx=40,
-    pady=15,
+    padx=20,
+    pady=8,
     cursor='hand2'
 )
-stop_button.pack(side='left', padx=10)
+stop_button.pack(side='left', padx=5)
 
 def calculate_rgb_distance(rgb1, rgb2):
     """
@@ -1661,7 +1661,7 @@ class AutomationController:
     Keine Logik implementiert – nur die Struktur und Hooks.
     """
 
-    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn, sets_progress_frame_ref):
+    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn, sets_progress_frame_ref, set_input_frame_ref):
         self.root = tk_root
         self.state = AutomationState.INIT
         self.running = False
@@ -1684,6 +1684,7 @@ class AutomationController:
         self.set_info_label = set_info_lbl
         self.set_images_container = set_images_container
         self.sets_progress_frame = sets_progress_frame_ref
+        self.set_input_frame = set_input_frame_ref
         self.set_image_labels: list[tk.Label] = []  # Liste der Bild-Labels
         self.start_button = start_btn
         self.pause_button = pause_btn
@@ -1946,8 +1947,9 @@ class AutomationController:
         self.paused = False
         self.state = AutomationState.INIT
         
-        # Verstecke Start-Button
+        # Verstecke Start-Button und Setnummer-Eingabe
         self.start_button.pack_forget()
+        self.set_input_frame.pack_forget()
         
         # Zeige Fortschrittsbereich an gleicher Stelle
         self.progress_frame.pack(fill='both', expand=True, pady=20)
@@ -1986,7 +1988,8 @@ class AutomationController:
         # Verstecke Fortschrittsbereich
         self.progress_frame.pack_forget()
         
-        # Zeige Start-Button wieder
+        # Zeige Setnummer-Eingabe und Start-Button wieder
+        self.set_input_frame.pack(fill='x', pady=(0, 20))
         self.start_button.pack(pady=20)
         
         # Setze Pause-Button zurück
@@ -2138,32 +2141,32 @@ class AutomationController:
 
 
 
-# Start-Button (groß, touch-optimiert)
+# Start-Button (kompakter für 7-Zoll Display)
 start_button = tk.Button(
     main_container,
-    text="▶ Automatik starten",
-    font=('Helvetica', 28, 'bold'),
+    text="▶ Start",
+    font=('Helvetica', 18, 'bold'),
     bg='#4caf50',
     fg='white',
     activebackground='#45a049',
     activeforeground='white',
     relief='flat',
     bd=0,
-    padx=50,
-    pady=25,
+    padx=30,
+    pady=12,
     cursor='hand2'
 )
-start_button.pack(pady=20)
+start_button.pack(pady=10)
 
-# Footer mit Hinweisen
+# Footer mit Hinweisen (kleiner)
 footer_label = tk.Label(
     main_container,
-    text="ESC = Beenden  |  Touch-Bedienung optimiert",
-    font=('Helvetica', 14),
+    text="ESC = Beenden",
+    font=('Helvetica', 10),
     bg='#1e1e1e',
     fg='#666666'
 )
-footer_label.pack(side='bottom', pady=10)
+footer_label.pack(side='bottom', pady=5)
 
 # Automatik-Controller instanziieren
 automation = AutomationController(
@@ -2177,7 +2180,8 @@ automation = AutomationController(
     start_button,
     pause_button,
     stop_button,
-    sets_progress_frame
+    sets_progress_frame,
+    set_input_frame
 )
 
 # Button-Commands zuweisen
