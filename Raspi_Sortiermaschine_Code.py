@@ -1,4 +1,4 @@
-ï»¿import os
+﻿import os
 import requests
 from PIL import Image, ImageTk
 from io import BytesIO
@@ -1696,7 +1696,7 @@ class AutomationController:
         
         # Motion Detection Variablen
         self.previous_frame = None
-        self.motion_threshold = 2000  # Anzahl geÃ¤Â¤nderter Pixel fÃ¤Â¼r Erkennung
+        self.motion_threshold = 2000  # Anzahl geänderter Pixel für Erkennung
         self.motion_detection_active = False
         self.part_detected = False
         self.last_motion_time = 0
@@ -2041,7 +2041,7 @@ class AutomationController:
                 # Setup, Sensor-Reset, LED-Status, Home-Fahrt
                 self._ensure_gpio()
                 
-                # LED-Ring auf 30% fÃ¤Â¼r Motion Detection
+                # LED-Ring auf 30% für Motion Detection
                 self._set_led_brightness(30)
                 
                 # Reset Motion Detection
@@ -2050,15 +2050,15 @@ class AutomationController:
                 self.part_detected = False
                 
                 # Sets sind bereits geladen, direkt weiter
-                self.current_status_label.config(text="Ã¢ÂÂ³ Warte auf Teil...", fg='#ff9800')
+                self.current_status_label.config(text="⏳ Warte auf Teil...", fg='#ff9800')
                 self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.WARTEN_AUF_TEIL:
-                # Motion Detection: Erkenne Teileinwurf durch BildÃ¤Â¤nderung
+                # Motion Detection: Erkenne Teileinwurf durch Bildänderung
                 if self.motion_detection_active:
                     if self._detect_motion():
                         # Bewegung erkannt!
-                        self.current_status_label.config(text="Ã¢Åâ Teil in Schleuse!", fg='#4caf50')
+                        self.current_status_label.config(text="✔ Teil in Schleuse!", fg='#4caf50')
                         print("Teil-Einwurf erkannt!")
                         
                         # Warte bis Teil ruhig liegt
@@ -2078,14 +2078,14 @@ class AutomationController:
                 self._set_led_brightness(100)
                 time.sleep(0.15)  # Kurz warten bis LED stabilisiert ist
                 
-                # Bild aufnehmen; bei Erfolg weiter zur Erkennung, sonst zurÃ¤Â¼ck warten
-                self.current_status_label.config(text="Ã°Å¸âÂ· Nehme Bild auf...", fg='#2196f3')
+                # Bild aufnehmen; bei Erfolg weiter zur Erkennung, sonst zurück warten
+                self.current_status_label.config(text="⏳ Nehme Bild auf...", fg='#2196f3')
                 
                 if capture_image(IMAGE_PATH):
                     self.state = AutomationState.ERKENNEN
                 else:
-                    self.current_status_label.config(text="Ã¢ÂÅ Fehler bei Bildaufnahme", fg='#f44336')
-                    # LED zurÃ¤Â¼ck auf 30%
+                    self.current_status_label.config(text="✗ Fehler bei Bildaufnahme", fg='#f44336')
+                    # LED zurück auf 30%
                     self._set_led_brightness(30)
                     # Motion Detection reaktivieren
                     self.motion_detection_active = True
@@ -2093,8 +2093,8 @@ class AutomationController:
                     self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.ERKENNEN:
-                # Erkennung durchfÃ¤Â¼hren (Brick + Farbe) und GUI aktualisieren
-                self.current_status_label.config(text="Ã°Å¸âÂ Erkenne Teil...", fg='#2196f3')
+                # Erkennung durchführen (Brick + Farbe) und GUI aktualisieren
+                self.current_status_label.config(text=" Erkenne Teil...", fg='#2196f3')
                 current_part_id, brick_name, img_url, num_detected, api_response = identify_brick(IMAGE_PATH)
                 color_info = None
                 region = None
@@ -2145,9 +2145,9 @@ class AutomationController:
 
             case AutomationState.SORTIEREN:
                 # TODO: Aktor/Servo/Relais ansteuern basierend auf Erkennung
-                self.current_status_label.config(text="Ã°Å¸âÂ¦ Sortiere Teil...", fg='#2196f3')
+                self.current_status_label.config(text=" Sortiere Teil...", fg='#2196f3')
                 
-                # Hier wÃ¤Â¼rde die Klappe gesteuert werden
+                # Hier wirde die Klappe gesteuert werden
                 # servo.set_angle(target_box_angle)
                 # time.sleep(0.5)  # Warte bis Teil gefallen
                 # servo.set_angle(0)  # Klappe schlieÃ¤Å¸en
@@ -2161,8 +2161,8 @@ class AutomationController:
                 self.motion_detection_active = True
                 self.previous_frame = None  # Reset Frame-Vergleich
                 
-                # ZurÃ¤Â¼ck zum Warten fÃ¤Â¼r kontinuierlichen Betrieb
-                self.current_status_label.config(text="Ã¢ÂÂ³ Warte auf nÃ¤Â¤chstes Teil...", fg='#ff9800')
+                # Zurück zum Warten für kontinuierlichen Betrieb
+                self.current_status_label.config(text=" Warte auf nächstes Teil...", fg='#ff9800')
                 self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.FERTIG:
@@ -2205,11 +2205,11 @@ class AutomationController:
     
     def _capture_low_res_frame(self):
         """
-        Nimmt ein Low-Resolution Frame fÃ¤Â¼r Motion Detection auf.
-        Gibt Grayscale NumPy Array zurÃ¤Â¼ck (ohne cv2, nur PIL).
+        Nimmt ein Low-Resolution Frame für Motion Detection auf.
+        Gibt Grayscale NumPy Array zurück (ohne cv2, nur PIL).
         """
         try:
-            # Konfiguration fÃ¤Â¼r schnelle Low-Res Aufnahme
+            # Konfiguration für schnelle Low-Res Aufnahme
             config_lowres = picam2.create_still_configuration(
                 main={"size": (320, 240), "format": "RGB888"}
             )
@@ -2236,8 +2236,8 @@ class AutomationController:
     
     def _detect_motion(self):
         """
-        PrÃ¤Â¼ft ob Bewegung im Kamerabild erkannt wurde.
-        Gibt True zurÃ¤Â¼ck wenn signifikante Ã¤ânderung detektiert wurde.
+        Prüft ob Bewegung im Kamerabild erkannt wurde.
+        Gibt True zurück wenn signifikante Änderung detektiert wurde.
         (Ohne cv2, nur NumPy)
         """
         try:
@@ -2262,12 +2262,12 @@ class AutomationController:
             changed_pixels = np.sum(motion_mask)
             
             # Debug-Output
-            print(f"Motion Detection: {changed_pixels} Pixel geÃ¤Â¤ndert (Schwelle: {self.motion_threshold})")
+            print(f"Motion Detection: {changed_pixels} Pixel geändert (Schwelle: {self.motion_threshold})")
             
-            # Frame fÃ¤Â¼r nÃ¤Â¤chsten Vergleich speichern
+            # Frame für nächsten Vergleich speichern
             self.previous_frame = current_frame
             
-            # PrÃ¤Â¼fe ob Schwellwert Ã¤Â¼berschritten
+            # Prüfe ob Schwellwert überschritten
             if changed_pixels > self.motion_threshold:
                 self.last_motion_time = time.time()
                 return True
