@@ -1069,48 +1069,48 @@ root.configure(bg='#1e1e1e')
 # ESC zum Beenden
 root.bind('<Escape>', lambda e: root.quit())
 
-# Hauptcontainer (reduzierte Paddings für 7-Zoll Display)
+# Hauptcontainer (minimal Padding für 7-Zoll Display)
 main_container = tk.Frame(root, bg='#1e1e1e')
-main_container.pack(fill='both', expand=True, padx=10, pady=10)
+main_container.pack(fill='both', expand=True, padx=5, pady=5)
 
-# Header (kompakter)
+# Header (kompakt)
 header_frame = tk.Frame(main_container, bg='#1e1e1e')
-header_frame.pack(fill='x', pady=(0, 10))
+header_frame.pack(fill='x', pady=(0, 5))
 
 title_label = tk.Label(
     header_frame,
-    text="🧱 LEGO Sortiermaschine",
-    font=('Helvetica', 24, 'bold'),
+    text="LEGO Sortierer",
+    font=('Helvetica', 18, 'bold'),
     bg='#1e1e1e',
     fg='white'
 )
 title_label.pack()
 
-# Set-Eingabe Bereich (kompakter)
-set_input_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
-set_input_frame.pack(fill='x', pady=(0, 10))
+# Set-Eingabe Bereich (kompakt)
+set_input_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=1)
+set_input_frame.pack(fill='x', pady=(0, 5))
 
 set_label = tk.Label(
     set_input_frame,
-    text="Setnummer(n) eingeben:",
-    font=('Helvetica', 16),
+    text="Setnummer:",
+    font=('Helvetica', 12),
     bg='#2b2b2b',
     fg='white'
 )
-set_label.pack(pady=(8, 5))
+set_label.pack(pady=(5, 3))
 
 set_number = tk.StringVar(root)
 entry_set_number = tk.Entry(
     set_input_frame,
     textvariable=set_number,
-    font=('Helvetica', 24),
+    font=('Helvetica', 18),
     bg='#3c3c3c',
     fg='white',
     insertbackground='white',
     relief='flat',
     justify='center'
 )
-entry_set_number.pack(pady=(0, 10), padx=20, ipady=15)
+entry_set_number.pack(pady=(0, 5), padx=10, ipady=8)
 
 # Variable für Touch-Tastatur
 touch_keyboard_popup = None
@@ -1310,12 +1310,12 @@ entry_set_number.bind('<Button-1>', lambda e: show_numeric_keyboard())
 
 set_hint_label = tk.Label(
     set_input_frame,
-    text="Mehrere Sets mit Komma trennen (z.B. 4723-1,31058)",
-    font=('Helvetica', 14),
+    text="Mit Komma trennen (4723-1,31058)",
+    font=('Helvetica', 10),
     bg='#2b2b2b',
     fg='#888888'
 )
-set_hint_label.pack(pady=(0, 10))
+set_hint_label.pack(pady=(0, 5))
 
 # Button-Frame für Set-Verwaltung
 set_button_frame = tk.Frame(set_input_frame, bg='#2b2b2b')
@@ -1323,32 +1323,32 @@ set_button_frame.pack(pady=(0, 15))
 
 load_set_button = tk.Button(
     set_button_frame,
-    text="📦 Set laden",
-    font=('Helvetica', 18, 'bold'),
+    text="Laden",
+    font=('Helvetica', 14, 'bold'),
     bg='#2196f3',
     fg='white',
     activebackground='#1976d2',
     activeforeground='white',
     relief='flat',
     bd=0,
-    padx=30,
-    pady=12,
+    padx=20,
+    pady=8,
     cursor='hand2'
 )
-load_set_button.pack(side='left', padx=5)
+load_set_button.pack(side='left', padx=3)
 
 clear_sets_button = tk.Button(
     set_button_frame,
-    text="🗑 Zurücksetzen",
-    font=('Helvetica', 18, 'bold'),
+    text="Reset",
+    font=('Helvetica', 14, 'bold'),
     bg='#ff5722',
     fg='white',
     activebackground='#e64a19',
     activeforeground='white',
     relief='flat',
     bd=0,
-    padx=30,
-    pady=12,
+    padx=20,
+    pady=8,
     cursor='hand2'
 )
 clear_sets_button.pack(side='left', padx=5)
@@ -1360,12 +1360,12 @@ set_info_frame.pack_forget()  # Initial versteckt
 
 set_info_title = tk.Label(
     set_info_frame,
-    text="Geladene Sets:",
-    font=('Helvetica', 20, 'bold'),
+    text="Sets:",
+    font=('Helvetica', 14, 'bold'),
     bg='#2b2b2b',
     fg='white'
 )
-set_info_title.pack(pady=(15, 10))
+set_info_title.pack(pady=(8, 5))
 
 # Container für Set-Details (Text + Bilder)
 set_details_container = tk.Frame(set_info_frame, bg='#2b2b2b')
@@ -1374,7 +1374,7 @@ set_details_container.pack(pady=(0, 15), padx=20, fill='both')
 set_info_label = tk.Label(
     set_details_container,
     text="",
-    font=('Helvetica', 16),
+    font=('Helvetica', 11),
     bg='#2b2b2b',
     fg='#4caf50',
     justify='left'
@@ -1389,25 +1389,25 @@ set_images_container.pack(side='left', padx=(20, 0))
 status_label = tk.Label(
     main_container,
     text="Bereit",
-    font=('Helvetica', 18),
+    font=('Helvetica', 14),
     bg='#1e1e1e',
     fg='#4caf50'
 )
-status_label.pack(pady=(0, 20))
+status_label.pack(pady=(0, 8))
 
 # Fortschrittsbereich (initial versteckt)
 progress_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=2)
 progress_frame.pack_forget()  # Initial versteckt
 
-# Aktueller Status während Sortierung (kleiner)
+# Aktueller Status während Sortierung
 current_status_label = tk.Label(
     progress_frame,
     text="Sortierung läuft...",
-    font=('Helvetica', 18, 'bold'),
+    font=('Helvetica', 13, 'bold'),
     bg='#2b2b2b',
     fg='#2196f3'
 )
-current_status_label.pack(pady=(10, 8))
+current_status_label.pack(pady=(5, 5))
 
 # Scrollable Canvas für Set-Fortschritt (reduzierte Höhe für 7-Zoll)
 progress_canvas_frame = tk.Frame(progress_frame, bg='#2b2b2b')
@@ -1417,7 +1417,7 @@ progress_canvas = tk.Canvas(
     progress_canvas_frame,
     bg='#2b2b2b',
     highlightthickness=0,
-    height=150
+    height=100
 )
 progress_canvas.pack(fill='both', expand=True)
 
@@ -1432,32 +1432,32 @@ control_buttons_frame.pack(pady=(8, 8))
 
 pause_button = tk.Button(
     control_buttons_frame,
-    text="⏸ Pause",
-    font=('Helvetica', 16, 'bold'),
+    text="Pause",
+    font=('Helvetica', 12, 'bold'),
     bg='#ff9800',
     fg='white',
     activebackground='#f57c00',
     activeforeground='white',
     relief='flat',
     bd=0,
-    padx=20,
-    pady=8,
+    padx=15,
+    pady=6,
     cursor='hand2'
 )
-pause_button.pack(side='left', padx=5)
+pause_button.pack(side='left', padx=3)
 
 stop_button = tk.Button(
     control_buttons_frame,
-    text="⏹ Stop",
-    font=('Helvetica', 16, 'bold'),
+    text="Stop",
+    font=('Helvetica', 12, 'bold'),
     bg='#f44336',
     fg='white',
     activebackground='#d32f2f',
     activeforeground='white',
     relief='flat',
     bd=0,
-    padx=20,
-    pady=8,
+    padx=15,
+    pady=6,
     cursor='hand2'
 )
 stop_button.pack(side='left', padx=5)
@@ -2306,32 +2306,32 @@ class AutomationController:
 
 
 
-# Start-Button (kompakter für 7-Zoll Display)
+# Start-Button (kompakt)
 start_button = tk.Button(
     main_container,
-    text="▶ Start",
-    font=('Helvetica', 18, 'bold'),
+    text="START",
+    font=('Helvetica', 14, 'bold'),
     bg='#4caf50',
     fg='white',
     activebackground='#45a049',
     activeforeground='white',
     relief='flat',
     bd=0,
-    padx=30,
-    pady=12,
+    padx=25,
+    pady=10,
     cursor='hand2'
 )
-start_button.pack(pady=10)
+start_button.pack(pady=5)
 
-# Footer mit Hinweisen (kleiner)
+# Footer (minimal)
 footer_label = tk.Label(
     main_container,
     text="ESC = Beenden",
-    font=('Helvetica', 10),
+    font=('Helvetica', 8),
     bg='#1e1e1e',
     fg='#666666'
 )
-footer_label.pack(side='bottom', pady=5)
+footer_label.pack(side='bottom', pady=2)
 
 # Automatik-Controller instanziieren
 automation = AutomationController(
