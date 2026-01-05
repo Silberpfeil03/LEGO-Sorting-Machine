@@ -1,4 +1,4 @@
-import os
+ï»¿import os
 import requests
 from PIL import Image, ImageTk
 from io import BytesIO
@@ -14,9 +14,11 @@ import numpy as np
 from enum import Enum, auto
 import threading
 import time
+import functools
 
 BRICKOGNIZE_API_URL = "https://api.brickognize.com/predict/"
 IMAGE_PATH = "/tmp/brick_image.jpg"
+MOTION_PREVIEW_PATH = "/tmp/motion_preview.jpg"
 
 # Globale Variablen
 lego_colors_df = None
@@ -1691,6 +1693,20 @@ class AutomationController:
         self.stop_button = stop_btn
         self.progress_bars: dict[str, tk.Canvas] = {}  # Fortschrittsbalken pro Set
         self.progress_labels: dict[str, tk.Label] = {}  # Labels pro Set
+        
+        # Motion Detection Variablen
+        self.previous_frame = None
+        self.motion_threshold = 2000  # Anzahl geÃ¤Â¤nderter Pixel fÃ¤Â¼r Erkennung
+        self.motion_detection_active = False
+        self.part_detected = False
+        self.last_motion_time = 0
+        
+        # LED-System initialisieren
+        try:
+            init_led()
+            print("LED-System initialisiert")
+        except Exception as e:
+            print(f"LED-Initialisierung fehlgeschlagen: {e}")
 
     def load_sets(self):
         """Lädt Sets aus dem Eingabefeld und zeigt Informationen an."""
@@ -1985,6 +2001,13 @@ class AutomationController:
         self.running = False
         self.paused = False
         
+        # Motion Detection deaktivieren
+        self.motion_detection_active = False
+        self.previous_frame = None
+        
+        # LED ausschalten
+        self._set_led_brightness(0)
+        
         # Verstecke Fortschrittsbereich
         self.progress_frame.pack_forget()
         
@@ -2017,30 +2040,61 @@ class AutomationController:
             case AutomationState.INIT:
                 # Setup, Sensor-Reset, LED-Status, Home-Fahrt
                 self._ensure_gpio()
+                
+                # LED-Ring auf 30% fÃ¤Â¼r Motion Detection
+                self._set_led_brightness(30)
+                
+                # Reset Motion Detection
+                self.previous_frame = None
+                self.motion_detection_active = True
+                self.part_detected = False
+                
                 # Sets sind bereits geladen, direkt weiter
+                self.current_status_label.config(text="Ã¢ÂÂ³ Warte auf Teil...", fg='#ff9800')
                 self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.WARTEN_AUF_TEIL:
-                # TODO: ERkennen von Teileinwurf mit Kamera/ Bild änderung
-                # Beispiel (Platzhalter): if self._read_part_present():
-                #     self.state = AutomationState.BILD_AUFNEHMEN
-                pass
+                # Motion Detection: Erkenne Teileinwurf durch BildÃ¤Â¤nderung
+                if self.motion_detection_active:
+                    if self._detect_motion():
+                        # Bewegung erkannt!
+                        self.current_status_label.config(text="Ã¢Åâ Teil in Schleuse!", fg='#4caf50')
+                        print("Teil-Einwurf erkannt!")
+                        
+                        # Warte bis Teil ruhig liegt
+                        self._wait_for_part_settled()
+                        
+                        # Motion Detection kurz deaktivieren
+                        self.motion_detection_active = False
+                        
+                        # Weiter zur Bildaufnahme
+                        self.state = AutomationState.BILD_AUFNEHMEN
+                    else:
+                        # Kleine Pause um CPU zu schonen (ca. 10 FPS)
+                        time.sleep(0.1)
 
             case AutomationState.BILD_AUFNEHMEN:
-                # Bild aufnehmen; bei Erfolg weiter zur Erkennung, sonst zurück warten
-                result_label.config(text="Automatik: Nehme Bild auf...")
-                clear_image(image_label)
-                clear_rgb_display()
+                # LED auf 100% fÃ¤Â¼r optimale BildqualitÃ¤Â¤t
+                self._set_led_brightness(100)
+                time.sleep(0.15)  # Kurz warten bis LED stabilisiert ist
+                
+                # Bild aufnehmen; bei Erfolg weiter zur Erkennung, sonst zurÃ¤Â¼ck warten
+                self.current_status_label.config(text="Ã°Å¸âÂ· Nehme Bild auf...", fg='#2196f3')
+                
                 if capture_image(IMAGE_PATH):
-                    show_last_captured_image()
                     self.state = AutomationState.ERKENNEN
                 else:
-                    result_label.config(text="Automatik: Bildaufnahme fehlgeschlagen – warte auf Teil")
+                    self.current_status_label.config(text="Ã¢ÂÅ Fehler bei Bildaufnahme", fg='#f44336')
+                    # LED zurÃ¤Â¼ck auf 30%
+                    self._set_led_brightness(30)
+                    # Motion Detection reaktivieren
+                    self.motion_detection_active = True
+                    self.previous_frame = None
                     self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.ERKENNEN:
-                # Erkennung durchführen (Brick + Farbe) und GUI aktualisieren
-                result_label.config(text="Automatik: Erkenne Teil...")
+                # Erkennung durchfÃ¤Â¼hren (Brick + Farbe) und GUI aktualisieren
+                self.current_status_label.config(text="Ã°Å¸âÂ Erkenne Teil...", fg='#2196f3')
                 current_part_id, brick_name, img_url, num_detected, api_response = identify_brick(IMAGE_PATH)
                 color_info = None
                 region = None
@@ -2079,33 +2133,37 @@ class AutomationController:
                                             if (part.get('id'), part.get('color_name')) == part_key:
                                                 # Teil gehört zu diesem Set
                                                 self.found_parts_per_set[set_num][part_key] = self.found_parts_per_set[set_num].get(part_key, 0) + 1
-                                                self.current_status_label.config(text=f"✓ Teil erkannt: {current_part_id}", fg='#4caf50')
+                                                print(f"Teil erkannt: {current_part_id}")
                                                 break
                                 
                                 # Aktualisiere Set-Info-Anzeige mit neuem Fortschritt
                                 self._update_set_info_display()
                                 # Aktualisiere Fortschritts-Visualisierung
                                 self._update_progress_visualization()
-                    result_label.config(text=info)
-                    if img_url:
-                        display_image_from_url(img_url, image_label)
-                    else:
-                        clear_image(image_label)
-                else:
-                    result_text = "Automatik: Kein Teil erkannt"
-                    if color_info:
-                        detected_rgb = color_info.get("rgb", (0, 0, 0))
-                        result_text += f"\nGemessene RGB: {detected_rgb}"
-                        update_rgb_comparison_display(detected_rgb)
-                    result_label.config(text=result_text)
-                    clear_image(image_label)
                 # Weiter zum Sortieren
                 self.state = AutomationState.SORTIEREN
 
             case AutomationState.SORTIEREN:
                 # TODO: Aktor/Servo/Relais ansteuern basierend auf Erkennung
-                # Abschlusszustand
-                self.state = AutomationState.FERTIG
+                self.current_status_label.config(text="Ã°Å¸âÂ¦ Sortiere Teil...", fg='#2196f3')
+                
+                # Hier wÃ¤Â¼rde die Klappe gesteuert werden
+                # servo.set_angle(target_box_angle)
+                # time.sleep(0.5)  # Warte bis Teil gefallen
+                # servo.set_angle(0)  # Klappe schlieÃ¤Å¸en
+                
+                time.sleep(0.3)  # Simuliere Sortier-Dauer
+                
+                # LED zurÃ¤Â¼ck auf 30% fÃ¤Â¼r Motion Detection
+                self._set_led_brightness(30)
+                
+                # Motion Detection reaktivieren fÃ¤Â¼r nÃ¤Â¤chstes Teil
+                self.motion_detection_active = True
+                self.previous_frame = None  # Reset Frame-Vergleich
+                
+                # ZurÃ¤Â¼ck zum Warten fÃ¤Â¼r kontinuierlichen Betrieb
+                self.current_status_label.config(text="Ã¢ÂÂ³ Warte auf nÃ¤Â¤chstes Teil...", fg='#ff9800')
+                self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.FERTIG:
                 # TODO: Abschluss, optional zurück nach WARTEN_AUF_TEIL für kontinuierlichen Betrieb
@@ -2129,6 +2187,113 @@ class AutomationController:
         except Exception:
             # Auf Nicht-Raspi-Systemen oder ohne Bibliothek einfach ignorieren
             self._gpio_initialized = False
+
+    def _set_led_brightness(self, brightness_percent):
+        """
+        Steuert die LED-Ring Helligkeit mit vorhandenen Funktionen.
+        :param brightness_percent: 0 = AUS, >0 = EIN (volle Helligkeit)
+        """
+        try:
+            if brightness_percent == 0:
+                clear_ring()
+                print(f"LED Ring: AUS")
+            else:
+                set_ring_white()
+                print(f"LED Ring: EIN ({brightness_percent}% angefordert)")
+        except Exception as e:
+            print(f"LED Steuerung fehlgeschlagen: {e}")
+    
+    def _capture_low_res_frame(self):
+        """
+        Nimmt ein Low-Resolution Frame fÃ¤Â¼r Motion Detection auf.
+        Gibt Grayscale NumPy Array zurÃ¤Â¼ck (ohne cv2, nur PIL).
+        """
+        try:
+            # Konfiguration fÃ¤Â¼r schnelle Low-Res Aufnahme
+            config_lowres = picam2.create_still_configuration(
+                main={"size": (320, 240), "format": "RGB888"}
+            )
+            picam2.configure(config_lowres)
+            picam2.start()
+            
+            # Aufnahme
+            frame = picam2.capture_array()
+            picam2.stop()
+            
+            # Konvertiere zu PIL Image
+            img = Image.fromarray(frame, mode='RGB')
+            
+            # Zu Grayscale konvertieren
+            gray_img = img.convert('L')
+            
+            # Zu NumPy Array fÃ¤Â¼r einfache Berechnungen
+            gray_array = np.array(gray_img, dtype=np.float32)
+            
+            return gray_array
+        except Exception as e:
+            print(f"Fehler bei Low-Res Capture: {e}")
+            return None
+    
+    def _detect_motion(self):
+        """
+        PrÃ¤Â¼ft ob Bewegung im Kamerabild erkannt wurde.
+        Gibt True zurÃ¤Â¼ck wenn signifikante Ã¤ânderung detektiert wurde.
+        (Ohne cv2, nur NumPy)
+        """
+        try:
+            # Aktuellen Frame aufnehmen
+            current_frame = self._capture_low_res_frame()
+            if current_frame is None:
+                return False
+            
+            # Beim ersten Durchlauf: Frame speichern und kein Motion
+            if self.previous_frame is None:
+                self.previous_frame = current_frame
+                return False
+            
+            # Frame-Differenz berechnen (Absolute Differenz)
+            frame_diff = np.abs(current_frame - self.previous_frame)
+            
+            # Schwellwert anwenden: Pixel mit Differenz > 30 zÃ¤Â¤hlen als Bewegung
+            threshold_value = 30
+            motion_mask = frame_diff > threshold_value
+            
+            # Anzahl der geÃ¤Â¤nderten Pixel zÃ¤Â¤hlen
+            changed_pixels = np.sum(motion_mask)
+            
+            # Debug-Output
+            print(f"Motion Detection: {changed_pixels} Pixel geÃ¤Â¤ndert (Schwelle: {self.motion_threshold})")
+            
+            # Frame fÃ¤Â¼r nÃ¤Â¤chsten Vergleich speichern
+            self.previous_frame = current_frame
+            
+            # PrÃ¤Â¼fe ob Schwellwert Ã¤Â¼berschritten
+            if changed_pixels > self.motion_threshold:
+                self.last_motion_time = time.time()
+                return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"Fehler bei Motion Detection: {e}")
+            return False
+    
+    def _wait_for_part_settled(self):
+        """
+        Wartet bis das Teil ruhig liegt (keine Bewegung mehr).
+        """
+        print("Warte bis Teil ruhig liegt...")
+        settled_count = 0
+        required_settled_frames = 3  # 3 Frames ohne Bewegung = Teil liegt ruhig
+        
+        while settled_count < required_settled_frames:
+            time.sleep(0.1)
+            if not self._detect_motion():
+                settled_count += 1
+            else:
+                settled_count = 0  # Reset wenn noch Bewegung
+        
+        print("Teil liegt ruhig!")
 
     def _read_part_present(self) -> bool:
         """
