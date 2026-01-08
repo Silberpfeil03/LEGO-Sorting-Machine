@@ -2154,10 +2154,10 @@ class AutomationController:
                 
                 time.sleep(0.3)  # Simuliere Sortier-Dauer
                 
-                # LED zurÃ¤Â¼ck auf 30% fÃ¤Â¼r Motion Detection
+                # LED zurück auf 30% für Motion Detection
                 self._set_led_brightness(30)
                 
-                # Motion Detection reaktivieren fÃ¤Â¼r nÃ¤Â¤chstes Teil
+                # Motion Detection reaktivieren für nächstes Teil
                 self.motion_detection_active = True
                 self.previous_frame = None  # Reset Frame-Vergleich
                 
