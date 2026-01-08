@@ -1701,12 +1701,64 @@ class AutomationController:
         self.part_detected = False
         self.last_motion_time = 0
         
+        # Sortier-Logik: Box-Winkel für Servo
+        # Box 1-3: Sets, Box 4: Ausschuss
+        self.box_angles = [0, 45, 90, 135]  # Winkel in Grad für 4 Boxen
+        self.set_to_box: dict[str, int] = {}  # Mapping: set_number -> box_index (0-2)
+        self.reject_box = 3  # Box 4 (Index 3) für Ausschuss
+        self.current_part_box = self.reject_box  # Aktuell zu sortierende Box
+        self.current_detected_part_id = None  # Zuletzt erkannte Teil-ID
+        
         # LED-System initialisieren
         try:
             init_led()
             print("LED-System initialisiert")
         except Exception as e:
             print(f"LED-Initialisierung fehlgeschlagen: {e}")
+
+    def _assign_boxes_to_sets(self):
+        """Ordnet geladenen Sets Boxen zu (max 3 Sets, Rest = Ausschuss)."""
+        self.set_to_box.clear()
+        
+        # Maximal 3 Sets können gleichzeitig sortiert werden
+        available_boxes = min(len(self.set_numbers), 3)
+        
+        for idx, set_num in enumerate(self.set_numbers[:3]):
+            self.set_to_box[set_num] = idx
+            print(f"Set {set_num} -> Box {idx + 1} (Winkel: {self.box_angles[idx]}°)")
+        
+        if len(self.set_numbers) > 3:
+            print(f"Warnung: Mehr als 3 Sets geladen. Nur die ersten 3 werden sortiert.")
+            for extra_set in self.set_numbers[3:]:
+                print(f"  Set {extra_set} wird ignoriert")
+        
+        print(f"Ausschuss -> Box 4 (Winkel: {self.box_angles[self.reject_box]}°)")
+    
+    def _determine_target_box(self, part_id: str, part_color: str) -> int:
+        """Bestimmt die Ziel-Box basierend auf Teil-ID und Farbe.
+        
+        :param part_id: Erkannte Teil-ID
+        :param part_color: Erkannte Farbe (BrickLink-Name)
+        :return: Box-Index (0-3)
+        """
+        if not part_id:
+            return self.reject_box  # Kein Teil erkannt -> Ausschuss
+        
+        # Prüfe in welchem Set dieses Teil vorkommt
+        for set_num in self.set_numbers[:3]:  # Nur erste 3 Sets
+            if set_num in self.parts_per_set:
+                for part in self.parts_per_set[set_num]:
+                    if part.get('id') == part_id:
+                        # Teil-ID passt, prüfe auch Farbe wenn vorhanden
+                        if part_color and part.get('color_name'):
+                            if part.get('color_name').lower() == part_color.lower():
+                                return self.set_to_box[set_num]
+                        else:
+                            # Keine Farb-Info, nutze nur ID
+                            return self.set_to_box[set_num]
+        
+        # Teil passt zu keinem geladenen Set -> Ausschuss
+        return self.reject_box
 
     def load_sets(self):
         """Lädt Sets aus dem Eingabefeld und zeigt Informationen an."""
@@ -1783,6 +1835,9 @@ class AutomationController:
         # Aktualisiere globale Referenz
         global current_set_parts
         current_set_parts = self.cached_set_parts
+        
+        # Ordne Sets den Boxen zu (max 3 Sets)
+        self._assign_boxes_to_sets()
         
         # Zeige Set-Informationen
         if self.loaded_sets_info:
@@ -2140,19 +2195,52 @@ class AutomationController:
                                 self._update_set_info_display()
                                 # Aktualisiere Fortschritts-Visualisierung
                                 self._update_progress_visualization()
+                                
+                                # Bestimme Ziel-Box für Sortierung
+                                part_color_name = match.get('bricklink_color', '')
+                                self.current_part_box = self._determine_target_box(current_part_id, part_color_name)
+                                self.current_detected_part_id = current_part_id
+                                
+                                box_num = self.current_part_box + 1
+                                if self.current_part_box == self.reject_box:
+                                    print(f"Teil {current_part_id} -> Ausschuss (Box {box_num})")
+                                else:
+                                    assigned_set = [s for s, b in self.set_to_box.items() if b == self.current_part_box][0]
+                                    print(f"Teil {current_part_id} -> Set {assigned_set} (Box {box_num})")
+                # Wenn kein Teil erkannt oder nicht im Set -> Ausschuss
+                if not current_part_id or not hasattr(self, 'current_part_box'):
+                    self.current_part_box = self.reject_box
+                    self.current_detected_part_id = None
+                    print("Kein gültiges Teil erkannt -> Ausschuss")
+                
                 # Weiter zum Sortieren
                 self.state = AutomationState.SORTIEREN
 
             case AutomationState.SORTIEREN:
-                # TODO: Aktor/Servo/Relais ansteuern basierend auf Erkennung
-                self.current_status_label.config(text=" Sortiere Teil...", fg='#2196f3')
+                # Sortiere Teil in die bestimmte Box
+                target_angle = self.box_angles[self.current_part_box]
+                box_name = f"Box {self.current_part_box + 1}"
                 
-                # Hier wirde die Klappe gesteuert werden
-                # servo.set_angle(target_box_angle)
+                if self.current_part_box == self.reject_box:
+                    box_name += " (Ausschuss)"
+                else:
+                    assigned_set = [s for s, b in self.set_to_box.items() if b == self.current_part_box]
+                    if assigned_set:
+                        box_name += f" (Set {assigned_set[0]})"
+                
+                self.current_status_label.config(text=f"Sortiere -> {box_name}", fg='#2196f3')
+                print(f"Sortiere Teil in {box_name} (Servo-Winkel: {target_angle}°)")
+                
+                # TODO: Tatsächliche Servo-Ansteuerung
+                # import RPi.GPIO as GPIO
+                # servo_pin = 17
+                # pwm = GPIO.PWM(servo_pin, 50)  # 50 Hz
+                # duty_cycle = 2.5 + (target_angle / 180.0) * 10.0
+                # pwm.ChangeDutyCycle(duty_cycle)
                 # time.sleep(0.5)  # Warte bis Teil gefallen
-                # servo.set_angle(0)  # Klappe schlieÃ¤Å¸en
+                # pwm.ChangeDutyCycle(0)  # Servo neutral/aus
                 
-                time.sleep(0.3)  # Simuliere Sortier-Dauer
+                time.sleep(0.5)  # Simuliere Sortier-Dauer
                 
                 # LED zurück auf 30% für Motion Detection
                 self._set_led_brightness(30)
@@ -2162,7 +2250,7 @@ class AutomationController:
                 self.previous_frame = None  # Reset Frame-Vergleich
                 
                 # Zurück zum Warten für kontinuierlichen Betrieb
-                self.current_status_label.config(text=" Warte auf nächstes Teil...", fg='#ff9800')
+                self.current_status_label.config(text="Warte auf naechstes Teil...", fg='#ff9800')
                 self.state = AutomationState.WARTEN_AUF_TEIL
 
             case AutomationState.FERTIG:
