@@ -1875,11 +1875,17 @@ class AutomationController:
                     print(f"Fehler beim Laden des Set-Bildes: {e}")
     
     def _update_set_info_display(self):
-        """Aktualisiert die Set-Info-Anzeige mit Fortschritt."""
+        """Aktualisiert die Set-Info-Anzeige mit Fortschritt und Box-Zuordnung."""
         info_text = ""
         for idx, set_info in enumerate(self.loaded_sets_info, 1):
             set_num = set_info['set_number']
             set_display_name = set_info['set_name'] if set_info['set_name'] else f"Set {set_num}"
+            
+            # Hole Box-Zuordnung
+            box_info = ""
+            if set_num in self.set_to_box:
+                box_num = self.set_to_box[set_num] + 1
+                box_info = f" -> Box {box_num}"
             
             # Berechne Fortschritt für dieses Set
             if set_num in self.parts_per_set:
@@ -1888,22 +1894,22 @@ class AutomationController:
                 percentage = int((found_qty / total_qty * 100)) if total_qty > 0 else 0
                 
                 if percentage == 100:
-                    progress_icon = "✓"
+                    progress_icon = "V"
                 elif percentage > 0:
-                    progress_icon = "▶"
+                    progress_icon = ">"
                 else:
-                    progress_icon = "○"
+                    progress_icon = "O"
                 
-                info_text += f"{idx}. {set_display_name}\n"
+                info_text += f"{idx}. {set_display_name}{box_info}\n"
                 info_text += f"   {progress_icon} {found_qty}/{total_qty} Teile ({percentage}%)\n\n"
             else:
-                info_text += f"{idx}. {set_display_name}\n"
+                info_text += f"{idx}. {set_display_name}{box_info}\n"
                 info_text += f"   {set_info['part_count']} verschiedene Teile, {set_info['total_qty']} gesamt\n\n"
         
         self.set_info_label.config(text=info_text)
     
     def _create_progress_visualizations(self):
-        """Erstellt Fortschrittsbalken für jedes geladene Set."""
+        """Erstellt Fortschrittsbalken für jedes geladene Set mit Box-Zuordnung."""
         for widget in self.sets_progress_frame.winfo_children():
             widget.destroy()
         self.progress_bars.clear()
@@ -1915,6 +1921,11 @@ class AutomationController:
                 continue
             
             set_display_name = set_info['set_name'] if set_info['set_name'] else f"Set {set_num}"
+            
+            # Füge Box-Info hinzu
+            if set_num in self.set_to_box:
+                box_num = self.set_to_box[set_num] + 1
+                set_display_name += f" (Box {box_num})"
             
             set_container = tk.Frame(self.sets_progress_frame, bg='#2b2b2b')
             set_container.pack(fill='x', pady=(10, 5), padx=10)
