@@ -92,7 +92,7 @@ SENSOR_LOWER_PIN = {
     "bcm": 27,     # BCM GPIO27
     "physical": 13,
     "function": "GPIO_INPUT",
-    "description": "Unterer Anschlag Sensor (1=unten angeschlagen)"
+    "description": "Unterer Anschlag Sensor - NO (0=unten angeschlagen)"
 }
 
 SENSOR_UPPER_PIN = {
@@ -100,7 +100,7 @@ SENSOR_UPPER_PIN = {
     "bcm": 22,     # BCM GPIO22
     "physical": 15,
     "function": "GPIO_INPUT",
-    "description": "Oberer Anschlag Sensor (0=oben angeschlagen)"
+    "description": "Oberer Anschlag Sensor - NC (1=oben angeschlagen)"
 }
 
 # Servo/Sortier Pins
@@ -136,13 +136,18 @@ class StepperController:
         self.pwm_object = None
         self.gpio_initialized = False
         
-        # Aktuelle Position und Status
-        self.current_position = "unknown"  # "upper", "lower", "moving", "unknown"
+        # Fahrtrichtung basierend auf DIR-Pin (LOW=up, HIGH=down)
+        self.last_direction = "unknown"  # "up", "down", "unknown"
         self.is_moving = False
         
         # Motor-Parameter
-        self.default_speed_hz = 500  # Standard Geschwindigkeit in Hz
+        self.default_speed_hz = 1000  # Standard Geschwindigkeit in Hz
         self.steps_per_cycle = 200   # Schritte für eine volle Bewegung (anpassbar)
+        
+        # Kontinuierliche Bewegung mit Auto-Reverse
+        self.continuous_mode = False
+        self.current_direction = "unknown"  # "up", "down", "unknown"
+        self.continuous_speed_hz = 1000  # Geschwindigkeit für kontinuierlichen Betrieb
         
     def init_gpio(self):
         """Initialisiert GPIO für Stepper Motor"""
@@ -164,15 +169,15 @@ class StepperController:
             GPIO.setup(self.pwm_pin, GPIO.OUT)
             self.pwm_object = GPIO.PWM(self.pwm_pin, self.default_speed_hz)
             
-            # Sensor Pins als Input mit Pull-Up
-            GPIO.setup(SENSOR_LOWER_PIN["bcm"], GPIO.IN, pull_up_down=GPIO.PUD_UP)
-            GPIO.setup(SENSOR_UPPER_PIN["bcm"], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+            # Sensor Pins als Input OHNE Pull-Up/Down (externe Hardware vorhanden)
+            GPIO.setup(SENSOR_LOWER_PIN["bcm"], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+            GPIO.setup(SENSOR_UPPER_PIN["bcm"], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
             
             self.gpio_initialized = True
             print(f"Stepper GPIO initialisiert: DIR=GPIO{self.dir_pin}, PWM=GPIO{self.pwm_pin}")
             
-            # Prüfe initiale Position
-            self._check_position()
+            # Initiale Richtung ist "up" (DIR=High)
+            self.last_direction = "up"
             
         except ImportError:
             print("WARNUNG: RPi.GPIO nicht verfügbar - Stepper Simulationsmodus")
@@ -181,35 +186,26 @@ class StepperController:
             print(f"Stepper GPIO Init Fehler: {e}")
             self.gpio_initialized = False
     
-    def _check_position(self):
-        """Prüft aktuelle Position anhand der Sensoren"""
+    def _get_current_direction(self):
+        """Liest aktuelle Fahrtrichtung vom DIR-Pin (LOW=up, HIGH=down)"""
         if not self.gpio_initialized:
-            return "unknown"
+            return self.last_direction
         
         try:
             import RPi.GPIO as GPIO
+            dir_state = GPIO.input(self.dir_pin)
             
-            lower_sensor = GPIO.input(SENSOR_LOWER_PIN["bcm"])
-            upper_sensor = GPIO.input(SENSOR_UPPER_PIN["bcm"])
-            
-            # SENSOR_LOWER: 1 = unten angeschlagen
-            # SENSOR_UPPER: 0 = oben angeschlagen
-            
-            if lower_sensor == 1:
-                self.current_position = "lower"
-                print("Schieber Position: UNTEN")
-            elif upper_sensor == 0:
-                self.current_position = "upper"
-                print("Schieber Position: OBEN")
+            # DIR Pin: LOW=0=Hoch, HIGH=1=Runter
+            if dir_state == GPIO.LOW:
+                self.last_direction = "up"
             else:
-                self.current_position = "unknown"
-                print("Schieber Position: UNBEKANNT (zwischen Sensoren)")
+                self.last_direction = "down"
             
-            return self.current_position
+            return self.last_direction
             
         except Exception as e:
-            print(f"Sensor-Abfrage Fehler: {e}")
-            return "unknown"
+            print(f"DIR-Pin Lesefehler: {e}")
+            return self.last_direction
     
     def move_up(self, speed_hz=None):
         """
@@ -219,18 +215,15 @@ class StepperController:
         if not self.gpio_initialized:
             print("SIMULATION: Schieber fährt HOCH")
             time.sleep(1.0)
-            self.current_position = "upper"
+            self.last_direction = "up"
             return True
         
         try:
             import RPi.GPIO as GPIO
             
-            if self.current_position == "upper":
-                print("Schieber bereits oben")
-                return True
-            
             # Richtung setzen: 0 = Hoch
             GPIO.output(self.dir_pin, GPIO.LOW)
+            self.last_direction = "up"
             
             # PWM starten
             speed = speed_hz if speed_hz else self.default_speed_hz
@@ -240,12 +233,12 @@ class StepperController:
             self.is_moving = True
             print(f"Schieber fährt HOCH ({speed}Hz)...")
             
-            # Warte auf oberen Sensor (0 = angeschlagen)
+            # Warte auf oberen Sensor (NC: 1 = angeschlagen, Kontakt öffnet)
             timeout = 10  # 10 Sekunden Timeout
             start_time = time.time()
             
             while True:
-                if GPIO.input(SENSOR_UPPER_PIN["bcm"]) == 0:
+                if GPIO.input(SENSOR_UPPER_PIN["bcm"]) == 1:
                     # Oben angekommen
                     break
                 
@@ -258,7 +251,6 @@ class StepperController:
             # PWM stoppen
             self.pwm_object.stop()
             self.is_moving = False
-            self.current_position = "upper"
             print("Schieber Position: OBEN erreicht")
             
             return True
@@ -278,18 +270,15 @@ class StepperController:
         if not self.gpio_initialized:
             print("SIMULATION: Schieber fährt RUNTER")
             time.sleep(1.0)
-            self.current_position = "lower"
+            self.last_direction = "down"
             return True
         
         try:
             import RPi.GPIO as GPIO
             
-            if self.current_position == "lower":
-                print("Schieber bereits unten")
-                return True
-            
             # Richtung setzen: 1 = Runter
             GPIO.output(self.dir_pin, GPIO.HIGH)
+            self.last_direction = "down"
             
             # PWM starten
             speed = speed_hz if speed_hz else self.default_speed_hz
@@ -299,12 +288,12 @@ class StepperController:
             self.is_moving = True
             print(f"Schieber fährt RUNTER ({speed}Hz)...")
             
-            # Warte auf unteren Sensor (1 = angeschlagen)
+            # Warte auf unteren Sensor (NO: 0 = angeschlagen, Kontakt schließt)
             timeout = 10  # 10 Sekunden Timeout
             start_time = time.time()
             
             while True:
-                if GPIO.input(SENSOR_LOWER_PIN["bcm"]) == 1:
+                if GPIO.input(SENSOR_LOWER_PIN["bcm"]) == 0:
                     # Unten angekommen
                     break
                 
@@ -317,7 +306,6 @@ class StepperController:
             # PWM stoppen
             self.pwm_object.stop()
             self.is_moving = False
-            self.current_position = "lower"
             print("Schieber Position: UNTEN erreicht")
             
             return True
@@ -331,69 +319,95 @@ class StepperController:
     
     def home(self):
         """
-        Fährt Schieber in Home-Position (oben).
+        Fährt Schieber in Home-Position (unten).
         Wird beim Start verwendet.
         """
-        print("Schieber: Fahre zur Home-Position (oben)...")
-        return self.move_up()
+        print("Schieber: Fahre zur Home-Position (unten)...")
+        return self.move_down()
     
-    def push_part(self):
-        """
-        Komplett-Zyklus: Fährt runter (Teil nehmen) und wieder hoch (Teil transportieren).
-        Dies ist die Hauptfunktion für den Teile-Transport.
-        """
-        print("=== Teile-Transport Zyklus START ===")
-        
-        # 1. Nach unten fahren (Teil aufnehmen)
-        if not self.move_down():
-            print("FEHLER: Konnte nicht nach unten fahren")
-            return False
-        
-        # Kurze Pause (Teil stabilisieren)
-        time.sleep(0.2)
-        
-        # 2. Nach oben fahren (Teil transportieren)
-        if not self.move_up():
-            print("FEHLER: Konnte nicht nach oben fahren")
-            return False
-        
-        print("=== Teile-Transport Zyklus BEENDET ===")
-        return True
-    
+
     def start_continuous_push(self):
         """
-        Startet kontinuierliche Schieber-Bewegung.
-        Der Schieber bewegt sich ständig hoch/runter um Teile nachzuschieben.
+        Startet kontinuierliche Schieber-Bewegung mit automatischer Richtungsumkehr.
+        Der Schieber fährt ständig hoch/runter zwischen den Sensoren und kehrt automatisch um.
+        Muss mit update_continuous_motion() regelmäßig aufgerufen werden!
         """
         if not self.gpio_initialized:
             print("SIMULATION: Kontinuierliche Schieber-Bewegung gestartet")
             self.is_moving = True
+            self.continuous_mode = True
             return True
         
         try:
             import RPi.GPIO as GPIO
             
-            # Richtung auf Runter setzen (Teile nachschieben)
-            GPIO.output(self.dir_pin, GPIO.HIGH)
+            # Wenn continuous_mode bereits aktiv war: Richtung beibehalten
+            # Sonst: Starte initial mit Runter
+            if self.current_direction == "unknown":
+                # Erster Start - default: Runter
+                self.current_direction = "down"
+            # Ansonsten: current_direction bleibt erhalten von update_continuous_motion()
             
-            # PWM mit niedriger Geschwindigkeit starten (kontinuierlich)
-            speed = 300  # Langsame Geschwindigkeit für kontinuierliches Nachschieben
-            self.pwm_object.ChangeFrequency(speed)
+            # Setze DIR-Pin entsprechend current_direction
+            if self.current_direction == "up":
+                GPIO.output(self.dir_pin, GPIO.HIGH)
+            else:
+                GPIO.output(self.dir_pin, GPIO.LOW)
+            
+            self.last_direction = self.current_direction
+            
+            # PWM starten
+            self.pwm_object.ChangeFrequency(self.continuous_speed_hz)
             self.pwm_object.start(50)
             
             self.is_moving = True
-            print(f"Kontinuierliche Schieber-Bewegung gestartet ({speed}Hz)")
+            self.continuous_mode = True
+            print(f"Kontinuierliche Auto-Reverse Bewegung gestartet ({self.continuous_speed_hz}Hz, Richtung: {self.current_direction})")
             return True
             
         except Exception as e:
             print(f"Fehler beim Starten der kontinuierlichen Bewegung: {e}")
             return False
     
+    def update_continuous_motion(self):
+        """
+        Prüft Sensoren und kehrt Richtung automatisch um wenn Endposition erreicht.
+        MUSS regelmäßig aufgerufen werden wenn continuous_mode aktiv ist!
+        """
+        if not self.continuous_mode or not self.gpio_initialized:
+            return
+        
+        try:
+            import RPi.GPIO as GPIO
+            
+            lower_sensor = GPIO.input(SENSOR_LOWER_PIN["bcm"])
+            upper_sensor = GPIO.input(SENSOR_UPPER_PIN["bcm"])
+            
+            # Unterer Sensor (NO): 1 = angeschlagen
+            if lower_sensor == 1 and self.current_direction == "down":
+                # Unten angekommen - kehre um nach Oben
+                print("Schieber: UNTEN erreicht → Richtung: HOCH")
+                GPIO.output(self.dir_pin, GPIO.LOW)  # Richtung Hoch
+                self.current_direction = "up"
+                self.last_direction = "up"
+            
+            # Oberer Sensor (NO): 1 = angeschlagen  
+            elif upper_sensor == 1 and self.current_direction == "up":
+                # Oben angekommen - kehre um nach Unten
+                print("Schieber: OBEN erreicht → Richtung: RUNTER")
+                GPIO.output(self.dir_pin, GPIO.HIGH)  # Richtung Runter
+                self.current_direction = "down"
+                self.last_direction = "down"
+        
+        except Exception as e:
+            print(f"Fehler beim Update der kontinuierlichen Bewegung: {e}")
+    
     def stop(self):
         """Stoppt Motor sofort"""
         if self.pwm_object:
             self.pwm_object.stop()
         self.is_moving = False
+        self.continuous_mode = False
         print("Stepper Motor gestoppt")
     
     def cleanup(self):
@@ -1815,6 +1829,41 @@ stop_button = tk.Button(
 )
 stop_button.pack(side='left', padx=5)
 
+# Debug-Panel für Stepper/Sensoren (nur während Automatik sichtbar)
+debug_frame = tk.Frame(progress_frame, bg='#1e1e1e', relief='flat', bd=2)
+debug_frame.pack(pady=(5, 5), padx=10, fill='x')
+
+debug_title = tk.Label(
+    debug_frame,
+    text="🔧 Debug Info",
+    font=('Helvetica', 10, 'bold'),
+    bg='#1e1e1e',
+    fg='#4caf50'
+)
+debug_title.pack(pady=(3, 3))
+
+# Stepper Status
+stepper_status_label = tk.Label(
+    debug_frame,
+    text="Schieber: ---",
+    font=('Courier', 9),
+    bg='#1e1e1e',
+    fg='#ffffff',
+    justify='left'
+)
+stepper_status_label.pack(pady=2)
+
+# Sensor Status
+sensor_status_label = tk.Label(
+    debug_frame,
+    text="Sensoren: Oben=? | Unten=?",
+    font=('Courier', 9),
+    bg='#1e1e1e',
+    fg='#ffffff',
+    justify='left'
+)
+sensor_status_label.pack(pady=2)
+
 def calculate_rgb_distance(rgb1, rgb2):
     """
     Berechnet den Euklidischen Abstand zwischen zwei RGB-Werten.
@@ -2016,7 +2065,7 @@ class AutomationController:
     Keine Logik implementiert – nur die Struktur und Hooks.
     """
 
-    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn, sets_progress_frame_ref, set_input_frame_ref):
+    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn, sets_progress_frame_ref, set_input_frame_ref, stepper_status_lbl, sensor_status_lbl):
         self.root = tk_root
         self.state = AutomationState.INIT
         self.running = False
@@ -2072,6 +2121,58 @@ class AutomationController:
         # Stepper Controller initialisieren
         self.stepper = get_stepper_controller()
         print("Stepper Controller bereit")
+        
+        # Debug-Labels Referenzen speichern
+        self.stepper_status_label = stepper_status_lbl
+        self.sensor_status_label = sensor_status_lbl
+        print(f"Debug-Labels zugewiesen: stepper={stepper_status_lbl}, sensor={sensor_status_lbl}")
+
+    def _update_debug_display(self):
+        """Aktualisiert Debug-Anzeige mit Stepper und Sensor Status"""
+        try:
+            if not self.stepper_status_label or not self.sensor_status_label:
+                print("Debug-Labels nicht vorhanden!")
+                return
+            
+            # Stepper Status - nur PWM und Position (kein DIR-Pin)
+            moving_status = "LÄUFT" if self.stepper.is_moving else "STEHT"
+            position = self.stepper.current_position.upper()
+            
+            # PWM Status
+            pwm_status = "AN" if (self.stepper.pwm_object is not None and self.stepper.is_moving) else "AUS"
+            
+            stepper_text = f"Schieber: {moving_status} | PWM: {pwm_status} | Richtung: {direction}"
+            self.stepper_status_label.config(text=stepper_text)
+            
+            # Sensor Status
+            upper_status = "?"
+            lower_status = "?"
+            
+            if self.stepper.gpio_initialized:
+                try:
+                    import RPi.GPIO as GPIO
+                    upper_val = GPIO.input(SENSOR_UPPER_PIN["bcm"])
+                    lower_val = GPIO.input(SENSOR_LOWER_PIN["bcm"])
+                    
+                    # SENSOR_UPPER: 0 = oben angeschlagen
+                    # SENSOR_LOWER: 1 = unten angeschlagen
+                    upper_status = "ANGESCHLAGEN" if upper_val == 0 else "FREI"
+                    lower_status = "ANGESCHLAGEN" if lower_val == 1 else "FREI"
+                except Exception as e:
+                    upper_status = f"ERR"
+                    lower_status = f"ERR"
+                    print(f"Sensor Lesefehler: {e}")
+            else:
+                upper_status = "SIM"
+                lower_status = "SIM"
+            
+            sensor_text = f"Sensoren: Oben={upper_status} | Unten={lower_status}"
+            self.sensor_status_label.config(text=sensor_text)
+            
+        except Exception as e:
+            print(f"Debug Display Update Fehler: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _assign_boxes_to_sets(self):
         """Ordnet geladenen Sets Boxen zu (max 3 Sets, Rest = Ausschuss)."""
@@ -2422,9 +2523,25 @@ class AutomationController:
         self.paused = not self.paused
         
         if self.paused:
+            # Schieber bei Pause stoppen
+            if self.stepper.continuous_mode:
+                try:
+                    self.stepper.stop()
+                    print("Schieber pausiert")
+                except Exception as e:
+                    print(f"Schieber Pause Fehler: {e}")
+            
             self.pause_button.config(text="▶ Fortsetzen", bg='#4caf50', activebackground='#45a049')
             self.status_label.config(text="Pausiert", fg='#ff9800')
         else:
+            # Schieber bei Fortsetzen wieder starten (wenn vorher aktiv)
+            if self.state == AutomationState.WARTEN_AUF_TEIL:
+                try:
+                    self.stepper.start_continuous_push()
+                    print("Schieber fortgesetzt")
+                except Exception as e:
+                    print(f"Schieber Fortsetzung Fehler: {e}")
+            
             self.pause_button.config(text="⏸ Pause", bg='#ff9800', activebackground='#f57c00')
             self.status_label.config(text="Automatik läuft...", fg='#2196f3')
     
@@ -2471,6 +2588,14 @@ class AutomationController:
         Sensorabfragen, Zeitbedingungen und Aktionen eingefügt werden.
         """
         global current_set_parts
+        
+        # Update Stepper kontinuierliche Bewegung (Auto-Reverse)
+        if self.stepper.continuous_mode:
+            self.stepper.update_continuous_motion()
+        
+        # Update Debug Display
+        self._update_debug_display()
+        
         # Beispielhafte Konsolen-Ausgabe zur Sichtbarkeit
         # print(f"[AUTOMATION] State: {self.state.name}")
 
@@ -2539,6 +2664,12 @@ class AutomationController:
                     self.current_status_label.config(text="✗ Fehler bei Bildaufnahme", fg='#f44336')
                     # LED zurück auf 30%
                     self._set_led_brightness(30)
+                    # Stepper wieder starten
+                    try:
+                        self.stepper.start_continuous_push()
+                        print("Stepper nach Bildaufnahme-Fehler wieder gestartet")
+                    except Exception as e:
+                        print(f"Stepper Restart Fehler: {e}")
                     # Motion Detection reaktivieren
                     self.motion_detection_active = True
                     self.previous_frame = None
@@ -2642,6 +2773,13 @@ class AutomationController:
                 
                 # LED zurück auf 30% für Motion Detection
                 self._set_led_brightness(30)
+                
+                # Stepper wieder starten für kontinuierlichen Betrieb
+                try:
+                    self.stepper.start_continuous_push()
+                    print("Stepper nach Sortierung wieder gestartet")
+                except Exception as e:
+                    print(f"Stepper Restart Fehler: {e}")
                 
                 # Motion Detection reaktivieren für nächstes Teil
                 self.motion_detection_active = True
@@ -2832,7 +2970,9 @@ automation = AutomationController(
     pause_button,
     stop_button,
     sets_progress_frame,
-    set_input_frame
+    set_input_frame,
+    stepper_status_label,
+    sensor_status_label
 )
 
 # Button-Commands zuweisen
