@@ -16,6 +16,16 @@ import threading
 import time
 import functools
 
+# GPIO Import am Anfang (wie in sensor_test.py)
+try:
+    import RPi.GPIO as GPIO
+    GPIO_AVAILABLE = True
+    print("✓ RPi.GPIO verfügbar")
+except ImportError:
+    GPIO_AVAILABLE = False
+    GPIO = None
+    print("⚠ RPi.GPIO nicht verfügbar - Simulationsmodus")
+
 BRICKOGNIZE_API_URL = "https://api.brickognize.com/predict/"
 IMAGE_PATH = "/tmp/brick_image.jpg"
 MOTION_PREVIEW_PATH = "/tmp/motion_preview.jpg"
@@ -154,8 +164,12 @@ class StepperController:
         if self.gpio_initialized:
             return
         
+        if not GPIO_AVAILABLE:
+            print("WARNUNG: RPi.GPIO nicht verfügbar - Stepper Simulationsmodus")
+            self.gpio_initialized = False
+            return
+        
         try:
-            import RPi.GPIO as GPIO
             GPIO.setmode(GPIO.BCM)
             GPIO.setwarnings(False)
             
@@ -169,22 +183,57 @@ class StepperController:
             GPIO.setup(self.pwm_pin, GPIO.OUT)
             self.pwm_object = GPIO.PWM(self.pwm_pin, self.default_speed_hz)
             
-            # Sensor Pins als Input OHNE Pull-Up/Down (externe Hardware vorhanden)
+            # Sensor Pins als Input mit Pull-Down (wie in sensor_test.py getestet)
             GPIO.setup(SENSOR_LOWER_PIN["bcm"], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
             GPIO.setup(SENSOR_UPPER_PIN["bcm"], GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
             
             self.gpio_initialized = True
             print(f"Stepper GPIO initialisiert: DIR=GPIO{self.dir_pin}, PWM=GPIO{self.pwm_pin}")
+            print(f"Sensor Pins initialisiert: LOWER=GPIO{SENSOR_LOWER_PIN['bcm']} (NO), UPPER=GPIO{SENSOR_UPPER_PIN['bcm']} (NC)")
             
-            # Initiale Richtung ist "up" (DIR=High)
+            # Sofort Sensor-Status testen
+            self.test_sensors()
+            
+            # Initiale Richtung ist "up" (DIR=Low)
             self.last_direction = "up"
             
-        except ImportError:
-            print("WARNUNG: RPi.GPIO nicht verfügbar - Stepper Simulationsmodus")
-            self.gpio_initialized = False
         except Exception as e:
             print(f"Stepper GPIO Init Fehler: {e}")
+            import traceback
+            traceback.print_exc()
             self.gpio_initialized = False
+    
+    def test_sensors(self):
+        """Testet Sensor-Pins und gibt Status aus (Debug)"""
+        if not self.gpio_initialized:
+            print("DEBUG: GPIO nicht initialisiert - kann Sensoren nicht testen")
+            return
+        
+        try:
+            print("\n" + "="*60)
+            print("SENSOR DEBUG TEST")
+            print("="*60)
+            
+            # Sensor-Werte lesen
+            lower_val = GPIO.input(SENSOR_LOWER_PIN["bcm"])
+            upper_val = GPIO.input(SENSOR_UPPER_PIN["bcm"])
+            
+            print(f"Unterer Sensor (NO) - GPIO{SENSOR_LOWER_PIN['bcm']}:")
+            print(f"  Roh-Wert: {lower_val} ({'HIGH' if lower_val else 'LOW'})")
+            print(f"  Status: {'ANGESCHLAGEN' if lower_val == 0 else 'FREI'}")
+            print(f"  Erwartung: 0=angeschlagen, 1=frei")
+            
+            print(f"\nOberer Sensor (NC) - GPIO{SENSOR_UPPER_PIN['bcm']}:")
+            print(f"  Roh-Wert: {upper_val} ({'HIGH' if upper_val else 'LOW'})")
+            print(f"  Status: {'ANGESCHLAGEN' if upper_val == 1 else 'FREI'}")
+            print(f"  Erwartung: 1=angeschlagen, 0=frei")
+            
+            print("="*60 + "\n")
+            
+        except Exception as e:
+            print(f"FEHLER beim Sensor-Test: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _get_current_direction(self):
         """Liest aktuelle Fahrtrichtung vom DIR-Pin (LOW=up, HIGH=down)"""
@@ -194,7 +243,6 @@ class StepperController:
         try:
             import RPi.GPIO as GPIO
             dir_state = GPIO.input(self.dir_pin)
-            
             # DIR Pin: LOW=0=Hoch, HIGH=1=Runter
             if dir_state == GPIO.LOW:
                 self.last_direction = "up"
@@ -220,8 +268,6 @@ class StepperController:
         
         try:
             import RPi.GPIO as GPIO
-            
-            # Richtung setzen: 0 = Hoch
             GPIO.output(self.dir_pin, GPIO.LOW)
             self.last_direction = "up"
             
@@ -276,8 +322,6 @@ class StepperController:
         try:
             import RPi.GPIO as GPIO
             
-            # Richtung setzen: 1 = Runter
-            GPIO.output(self.dir_pin, GPIO.HIGH)
             self.last_direction = "down"
             
             # PWM starten
@@ -378,26 +422,51 @@ class StepperController:
             return
         
         try:
-            import RPi.GPIO as GPIO
-            
             lower_sensor = GPIO.input(SENSOR_LOWER_PIN["bcm"])
             upper_sensor = GPIO.input(SENSOR_UPPER_PIN["bcm"])
             
-            # Unterer Sensor (NO): 1 = angeschlagen
+            # Debug: Sensor-Werte ausgeben (alle 2 Sekunden)
+            if not hasattr(self, '_last_sensor_debug') or time.time() - self._last_sensor_debug > 2.0:
+                print(f"[SENSOR] Unten={lower_sensor} ({'ANGESCHLAGEN' if lower_sensor == 1 else 'FREI'}), Oben={upper_sensor} ({'ANGESCHLAGEN' if upper_sensor == 1 else 'FREI'}), Richtung={self.current_direction}")
+                self._last_sensor_debug = time.time()
+            
+            # Unterer Sensor (NO): 0 = angeschlagen (Kontakt geschlossen)
             if lower_sensor == 1 and self.current_direction == "down":
                 # Unten angekommen - kehre um nach Oben
-                print("Schieber: UNTEN erreicht → Richtung: HOCH")
-                GPIO.output(self.dir_pin, GPIO.LOW)  # Richtung Hoch
+                print("🔄 Schieber: UNTEN erreicht → Stoppe Motor → Richtung: HOCH")
+                
+                # PWM stoppen für saubere Richtungsänderung
+                if self.pwm_object:
+                    self.pwm_object.stop()
+                time.sleep(1)  # 1000ms Pause
+                
+                # Richtung ändern
+                GPIO.output(self.dir_pin, GPIO.HIGH)  # Richtung Hoch
                 self.current_direction = "up"
                 self.last_direction = "up"
+                
+                # PWM wieder starten
+                self.pwm_object.ChangeFrequency(self.continuous_speed_hz)
+                self.pwm_object.start(50)
             
-            # Oberer Sensor (NO): 1 = angeschlagen  
+            # Oberer Sensor (NC): 1 = angeschlagen (Kontakt geschlossen)
             elif upper_sensor == 1 and self.current_direction == "up":
                 # Oben angekommen - kehre um nach Unten
-                print("Schieber: OBEN erreicht → Richtung: RUNTER")
-                GPIO.output(self.dir_pin, GPIO.HIGH)  # Richtung Runter
+                print("🔄 Schieber: OBEN erreicht → Stoppe Motor → Richtung: RUNTER")
+                
+                # PWM stoppen für saubere Richtungsänderung
+                if self.pwm_object:
+                    self.pwm_object.stop()
+                time.sleep(1)  # 1000ms Pause
+                
+                # Richtung ändern
+                GPIO.output(self.dir_pin, GPIO.LOW)  # Richtung Runter
                 self.current_direction = "down"
                 self.last_direction = "down"
+                
+                # PWM wieder starten
+                self.pwm_object.ChangeFrequency(self.continuous_speed_hz)
+                self.pwm_object.start(50)
         
         except Exception as e:
             print(f"Fehler beim Update der kontinuierlichen Bewegung: {e}")
@@ -415,7 +484,6 @@ class StepperController:
         self.stop()
         if self.gpio_initialized:
             try:
-                import RPi.GPIO as GPIO
                 GPIO.cleanup([self.pwm_pin, self.dir_pin, 
                              SENSOR_LOWER_PIN["bcm"], SENSOR_UPPER_PIN["bcm"]])
                 print("Stepper GPIO bereinigt")
@@ -2134,9 +2202,9 @@ class AutomationController:
                 print("Debug-Labels nicht vorhanden!")
                 return
             
-            # Stepper Status - nur PWM und Position (kein DIR-Pin)
+            # Stepper Status - nur PWM und Richtung
             moving_status = "LÄUFT" if self.stepper.is_moving else "STEHT"
-            position = self.stepper.current_position.upper()
+            direction = self.stepper.last_direction.upper()
             
             # PWM Status
             pwm_status = "AN" if (self.stepper.pwm_object is not None and self.stepper.is_moving) else "AUS"
@@ -2150,18 +2218,26 @@ class AutomationController:
             
             if self.stepper.gpio_initialized:
                 try:
-                    import RPi.GPIO as GPIO
                     upper_val = GPIO.input(SENSOR_UPPER_PIN["bcm"])
                     lower_val = GPIO.input(SENSOR_LOWER_PIN["bcm"])
+                    # Debug: Erste 5 Lesungen ausgeben
+                    if not hasattr(self, '_debug_read_count'):
+                        self._debug_read_count = 0
                     
-                    # SENSOR_UPPER: 0 = oben angeschlagen
-                    # SENSOR_LOWER: 1 = unten angeschlagen
-                    upper_status = "ANGESCHLAGEN" if upper_val == 0 else "FREI"
-                    lower_status = "ANGESCHLAGEN" if lower_val == 1 else "FREI"
+                    if self._debug_read_count < 5:
+                        print(f"[DEBUG #{self._debug_read_count}] Sensor-Werte: Oben(GPIO{SENSOR_UPPER_PIN['bcm']})={upper_val}, Unten(GPIO{SENSOR_LOWER_PIN['bcm']})={lower_val}")
+                        self._debug_read_count += 1
+                    
+                    # SENSOR_UPPER (NC): 1 = angeschlagen (Kontakt geschlossen)
+                    # SENSOR_LOWER (NO): 0 = angeschlagen (Kontakt geschlossen)
+                    upper_status = "ANGESCHLAGEN" if upper_val == 1 else "FREI"
+                    lower_status = "ANGESCHLAGEN" if lower_val == 0 else "FREI"
                 except Exception as e:
                     upper_status = f"ERR"
                     lower_status = f"ERR"
-                    print(f"Sensor Lesefehler: {e}")
+                    print(f"❌ Sensor Lesefehler: {e}")
+                    import traceback
+                    traceback.print_exc()
             else:
                 upper_status = "SIM"
                 lower_status = "SIM"
