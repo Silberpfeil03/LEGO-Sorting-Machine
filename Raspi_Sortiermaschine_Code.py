@@ -114,25 +114,28 @@ SENSOR_UPPER_PIN = {
 }
 
 # Servo/Sortier Pins
-SERVO_GATE_PIN = {
+SERVO_SORT_PIN = {
     "wiring": 23,  # WiringPi 23
     "bcm": 13,     # BCM GPIO13
     "physical": 33,
     "function": "PWM1",
-    "description": "Klappe/Schleuse Servo"
+    "pwm_type": "hardware",
+    "description": "Sortierung Servo (270° Servo) - Hardware-PWM"
 }
 
-SERVO_SORT_PIN = {
-    "wiring": 24,  # WiringPi 24
-    "bcm": 19,     # BCM GPIO19
-    "physical": 35,
-    "function": "PWM1",
-    "description": "Sortierung/Kistenzuordnung Servo"
+SERVO_GATE_PIN = {
+    "wiring": 6,   # WiringPi 6
+    "bcm": 25,     # BCM GPIO25
+    "physical": 22,
+    "function": "GPIO",
+    "pwm_type": "software",
+    "description": "Klappe/Schleuse Servo - Software-PWM"
 }
 
-# WARNUNG: GPIO 23 und 24 teilen sich PWM1-Kanal!
-# Sie können NICHT gleichzeitig unterschiedliche PWM-Signale ausgeben.
-# Lösung: Zeitversetzt nutzen ODER einen Pin auf Software-PWM umstellen.
+# INFO: 
+# - SERVO_SORT verwendet Hardware-PWM1 (präzise für 270° Servo)
+# - SERVO_GATE verwendet Software-PWM (ausreichend für Klappen-Servo)
+# - Kein Pin-Konflikt mehr!
 
 # --- Stepper Motor Controller ---
 class StepperController:
@@ -490,6 +493,209 @@ class StepperController:
             except:
                 pass
         self.gpio_initialized = False
+
+# --- Servo Controller ---
+class ServoController:
+    """
+    Dual Servo Controller für Sortierung und Klappe.
+    - Sortier-Servo: Hardware-PWM (270° Servo, präzise Positionierung)
+    - Klappen-Servo: Software-PWM (einfache On/Off Bewegung)
+    """
+    def __init__(self):
+        self.sort_servo_pin = None
+        self.gate_servo_pin = None
+        self.sort_pwm = None  # Hardware-PWM Objekt
+        self.gate_pwm = None  # Software-PWM Objekt
+        self.servo_frequency = 50  # 50Hz Standard für Servos
+        self.gpio_initialized = False
+        
+        # Positionen für 270° Sortier-Servo (kann angepasst werden)
+        self.sort_positions = {
+            "box1": 0,      # Kiste 1
+            "box2": 90,     # Kiste 2
+            "box3": 180,    # Kiste 3
+            "box4": 270,    # Kiste 4 (falls 270° Servo)
+            "center": 135   # Mittelposition
+        }
+        
+        # Positionen für Klappen-Servo
+        self.gate_positions = {
+            "open": 90,     # Klappe offen
+            "closed": 0     # Klappe geschlossen
+        }
+    
+    def init_servos(self):
+        """Initialisiert beide Servos"""
+        if self.gpio_initialized:
+            return True
+        
+        if not GPIO_AVAILABLE:
+            print("WARNUNG: RPi.GPIO nicht verfügbar - Servo Simulationsmodus")
+            self.gpio_initialized = False
+            return False
+        
+        try:
+            # Sortier-Servo: Hardware-PWM auf GPIO13
+            self.sort_servo_pin = SERVO_SORT_PIN["bcm"]
+            GPIO.setup(self.sort_servo_pin, GPIO.OUT)
+            self.sort_pwm = GPIO.PWM(self.sort_servo_pin, self.servo_frequency)
+            self.sort_pwm.start(0)  # Start mit 0% Duty
+            
+            # Klappen-Servo: Software-PWM auf GPIO25
+            self.gate_servo_pin = SERVO_GATE_PIN["bcm"]
+            GPIO.setup(self.gate_servo_pin, GPIO.OUT)
+            self.gate_pwm = GPIO.PWM(self.gate_servo_pin, self.servo_frequency)
+            self.gate_pwm.start(0)  # Start mit 0% Duty
+            
+            self.gpio_initialized = True
+            print(f"Servos initialisiert:")
+            print(f"  Sortier-Servo: GPIO{self.sort_servo_pin} (Hardware-PWM, 50Hz)")
+            print(f"  Klappen-Servo: GPIO{self.gate_servo_pin} (Software-PWM, 50Hz)")
+            
+            # Setze auf Standardpositionen
+            self.set_sort_position("center")
+            self.set_gate_position("closed")
+            
+            return True
+            
+        except Exception as e:
+            print(f"Servo Init Fehler: {e}")
+            import traceback
+            traceback.print_exc()
+            self.gpio_initialized = False
+            return False
+    
+    def _angle_to_duty_cycle(self, angle):
+        """
+        Konvertiert Winkel (0-270°) zu Duty Cycle (2.5% - 12.5%)
+        
+        Standard Servo Mapping:
+        - 0°   = 2.5% Duty Cycle (0.5ms Puls bei 50Hz)
+        - 90°  = 7.5% Duty Cycle (1.5ms Puls)
+        - 180° = 12.5% Duty Cycle (2.5ms Puls)
+        - 270° = 17.5% Duty Cycle (3.5ms Puls, nur für 270° Servos)
+        """
+        # Begrenze Winkel auf 0-270°
+        angle = max(0, min(270, angle))
+        
+        # Lineare Interpolation: 0° → 2.5%, 270° → 17.5%
+        duty_cycle = 2.5 + (angle / 270.0) * 15.0
+        
+        return duty_cycle
+    
+    def set_sort_angle(self, angle):
+        """
+        Setzt Sortier-Servo auf bestimmten Winkel (0-270°)
+        :param angle: Winkel in Grad (0-270)
+        """
+        if not self.gpio_initialized:
+            print("SIMULATION: Sortier-Servo → {angle}°")
+            return False
+        
+        try:
+            duty_cycle = self._angle_to_duty_cycle(angle)
+            self.sort_pwm.ChangeDutyCycle(duty_cycle)
+            print(f"Sortier-Servo: {angle}° (Duty: {duty_cycle:.2f}%)")
+            time.sleep(0.3)  # Warte auf Servo-Bewegung
+            self.sort_pwm.ChangeDutyCycle(0)  # Stoppe Puls (verhindert Servo-Zittern)
+            return True
+            
+        except Exception as e:
+            print(f"Sortier-Servo Fehler: {e}")
+            return False
+    
+    def set_sort_position(self, position_name):
+        """
+        Setzt Sortier-Servo auf vordefinierte Position
+        :param position_name: "box1", "box2", "box3", "box4", "center"
+        """
+        if position_name not in self.sort_positions:
+            print(f"Unbekannte Position: {position_name}")
+            return False
+        
+        angle = self.sort_positions[position_name]
+        print(f"Sortier-Servo → Position '{position_name}' ({angle}°)")
+        return self.set_sort_angle(angle)
+    
+    def set_gate_angle(self, angle):
+        """
+        Setzt Klappen-Servo auf bestimmten Winkel (0-180°)
+        :param angle: Winkel in Grad (0-180)
+        """
+        if not self.gpio_initialized:
+            print(f"SIMULATION: Klappen-Servo → {angle}°")
+            return False
+        
+        try:
+            # Begrenze auf 0-180° für Standard-Servo
+            angle = max(0, min(180, angle))
+            duty_cycle = 2.5 + (angle / 180.0) * 10.0
+            
+            self.gate_pwm.ChangeDutyCycle(duty_cycle)
+            print(f"Klappen-Servo: {angle}° (Duty: {duty_cycle:.2f}%)")
+            time.sleep(0.3)  # Warte auf Servo-Bewegung
+            self.gate_pwm.ChangeDutyCycle(0)  # Stoppe Puls
+            return True
+            
+        except Exception as e:
+            print(f"Klappen-Servo Fehler: {e}")
+            return False
+    
+    def set_gate_position(self, position_name):
+        """
+        Setzt Klappen-Servo auf vordefinierte Position
+        :param position_name: "open", "closed"
+        """
+        if position_name not in self.gate_positions:
+            print(f"Unbekannte Klappenposition: {position_name}")
+            return False
+        
+        angle = self.gate_positions[position_name]
+        print(f"Klappen-Servo → Position '{position_name}' ({angle}°)")
+        return self.set_gate_angle(angle)
+    
+    def open_gate(self):
+        """Öffnet Klappe"""
+        return self.set_gate_position("open")
+    
+    def close_gate(self):
+        """Schließt Klappe"""
+        return self.set_gate_position("closed")
+    
+    def stop(self):
+        """Stoppt beide Servos (PWM auf 0)"""
+        if self.sort_pwm:
+            self.sort_pwm.ChangeDutyCycle(0)
+        if self.gate_pwm:
+            self.gate_pwm.ChangeDutyCycle(0)
+        print("Servos gestoppt")
+    
+    def cleanup(self):
+        """GPIO Cleanup"""
+        self.stop()
+        if self.gpio_initialized:
+            try:
+                if self.sort_pwm:
+                    self.sort_pwm.stop()
+                if self.gate_pwm:
+                    self.gate_pwm.stop()
+                
+                GPIO.cleanup([self.sort_servo_pin, self.gate_servo_pin])
+                print("Servo GPIO bereinigt")
+            except:
+                pass
+        self.gpio_initialized = False
+
+# Globale Servo-Instanz
+_servo_controller = None
+
+def get_servo_controller():
+    """Gibt Singleton Servo Controller zurück"""
+    global _servo_controller
+    if _servo_controller is None:
+        _servo_controller = ServoController()
+        _servo_controller.init_servos()
+    return _servo_controller
 
 # Globale Stepper-Instanz
 _stepper_controller = None
@@ -2171,10 +2377,10 @@ class AutomationController:
         self.part_detected = False
         self.last_motion_time = 0
         
-        # Sortier-Logik: Box-Winkel für Servo
-        # Box 1-3: Sets, Box 4: Ausschuss
-        self.box_angles = [0, 45, 90, 135]  # Winkel in Grad für 4 Boxen
-        self.set_to_box: dict[str, int] = {}  # Mapping: set_number -> box_index (0-2)
+        # Sortier-Logik: Box-Zuordnung für Servo
+        # Box 1-4: Sortier-Positionen (box1, box2, box3, box4 im ServoController)
+        self.box_positions = ["box1", "box2", "box3", "box4"]  # Position-Namen für Servo
+        self.set_to_box: dict[str, int] = {}  # Mapping: set_number -> box_index (0-3)
         self.reject_box = 3  # Box 4 (Index 3) für Ausschuss
         self.current_part_box = self.reject_box  # Aktuell zu sortierende Box
         self.current_detected_part_id = None  # Zuletzt erkannte Teil-ID
@@ -2189,6 +2395,10 @@ class AutomationController:
         # Stepper Controller initialisieren
         self.stepper = get_stepper_controller()
         print("Stepper Controller bereit")
+        
+        # Servo Controller initialisieren
+        self.servo = get_servo_controller()
+        print("Servo Controller bereit")
         
         # Debug-Labels Referenzen speichern
         self.stepper_status_label = stepper_status_lbl
@@ -2259,14 +2469,14 @@ class AutomationController:
         
         for idx, set_num in enumerate(self.set_numbers[:3]):
             self.set_to_box[set_num] = idx
-            print(f"Set {set_num} -> Box {idx + 1} (Winkel: {self.box_angles[idx]}°)")
+            print(f"Set {set_num} -> Box {idx + 1} (Position: {self.box_positions[idx]})")
         
         if len(self.set_numbers) > 3:
             print(f"Warnung: Mehr als 3 Sets geladen. Nur die ersten 3 werden sortiert.")
             for extra_set in self.set_numbers[3:]:
                 print(f"  Set {extra_set} wird ignoriert")
         
-        print(f"Ausschuss -> Box 4 (Winkel: {self.box_angles[self.reject_box]}°)")
+        print(f"Ausschuss -> Box 4 (Position: {self.box_positions[self.reject_box]})")
     
     def _determine_target_box(self, part_id: str, part_color: str) -> int:
         """Bestimmt die Ziel-Box basierend auf Teil-ID und Farbe.
@@ -2822,7 +3032,7 @@ class AutomationController:
 
             case AutomationState.SORTIEREN:
                 # Sortiere Teil in die bestimmte Box
-                target_angle = self.box_angles[self.current_part_box]
+                target_position = self.box_positions[self.current_part_box]
                 box_name = f"Box {self.current_part_box + 1}"
                 
                 if self.current_part_box == self.reject_box:
@@ -2833,19 +3043,34 @@ class AutomationController:
                         box_name += f" (Set {assigned_set[0]})"
                 
                 self.current_status_label.config(text=f"Sortiere -> {box_name}", fg='#2196f3')
-                print(f"Sortiere Teil in {box_name} (Servo-Winkel: {target_angle}°)")
+                print(f"Sortiere Teil in {box_name} (Servo-Position: {target_position})")
                 
                 # Schieber bleibt GESTOPPT während Sortierung!
+                # Sortier-Servo auf Zielposition
+                try:
+                    self.servo.set_sort_position(target_position)
+                    print(f"Sortier-Servo auf {target_position}")
+                except Exception as e:
+                    print(f"Sortier-Servo Fehler: {e}")
                 
-                # TODO: Servo-Ansteuerung für Sortierung (später)
-                # servo_pin = SERVO_SORT_PIN["bcm"]
-                # pwm = GPIO.PWM(servo_pin, 50)  # 50 Hz
-                # duty_cycle = 2.5 + (target_angle / 180.0) * 10.0
-                # pwm.ChangeDutyCycle(duty_cycle)
-                # time.sleep(0.5)  # Warte bis Teil gefallen
-                # pwm.ChangeDutyCycle(0)  # Servo neutral/aus
+                # Klappe öffnen
+                try:
+                    self.servo.open_gate()
+                    print("Klappe geöffnet")
+                except Exception as e:
+                    print(f"Klappen-Servo Fehler: {e}")
                 
-                time.sleep(0.3)  # Kurze Pause nach Sortierung
+
+                time.sleep(0.5)  # Warte bis Teil gefallen ist
+                
+                # Klappe schließen
+                try:
+                    self.servo.close_gate()
+                    print("Klappe geschlossen")
+                except Exception as e:
+                    print(f"Klappen-Servo Fehler: {e}")
+                
+                time.sleep(0.2)  # Kurze Pause nach Sortierung
                 
                 # LED zurück auf 30% für Motion Detection
                 self._set_led_brightness(30)
