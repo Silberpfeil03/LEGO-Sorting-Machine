@@ -1710,6 +1710,193 @@ root.configure(bg='#1e1e1e')
 # ESC zum Beenden
 root.bind('<Escape>', lambda e: root.quit())
 
+# --- Settings Window Funktion ---
+def open_settings_window(parent_root):
+    """Öffnet das Einstellungsfenster für Servo-Konfiguration"""
+    settings_win = tk.Toplevel(parent_root)
+    settings_win.title("Servo Einstellungen")
+    settings_win.geometry("600x500")
+    settings_win.configure(bg='#1e1e1e')
+    settings_win.resizable(False, False)
+    
+    # Servo-Controller Referenz holen
+    servo = get_servo_controller()
+    
+    # Hauptcontainer
+    main_frame = tk.Frame(settings_win, bg='#1e1e1e')
+    main_frame.pack(fill='both', expand=True, padx=20, pady=20)
+    
+    # Titel
+    title = tk.Label(
+        main_frame,
+        text="⚙️ Servo Einstellungen",
+        font=('Helvetica', 16, 'bold'),
+        bg='#1e1e1e',
+        fg='white'
+    )
+    title.pack(pady=(0, 20))
+    
+    # --- Sortier-Servo Positionen ---
+    sort_frame = tk.LabelFrame(
+        main_frame,
+        text="Kisten-Positionen (0-270°)",
+        font=('Helvetica', 12, 'bold'),
+        bg='#2b2b2b',
+        fg='white',
+        relief='flat',
+        bd=2
+    )
+    sort_frame.pack(fill='x', pady=(0, 15))
+    
+    # Position Slider für jede Box
+    box_sliders = {}
+    box_names = ["box1", "box2", "box3", "box4"]
+    box_labels = ["Box 1", "Box 2", "Box 3", "Box 4 (Ausschuss)"]
+    
+    for idx, (box_name, box_label) in enumerate(zip(box_names, box_labels)):
+        row_frame = tk.Frame(sort_frame, bg='#2b2b2b')
+        row_frame.pack(fill='x', padx=10, pady=5)
+        
+        # Label
+        label = tk.Label(
+            row_frame,
+            text=f"{box_label}:",
+            font=('Helvetica', 10),
+            bg='#2b2b2b',
+            fg='white',
+            width=20,
+            anchor='w'
+        )
+        label.pack(side='left')
+        
+        # Wert-Anzeige
+        value_label = tk.Label(
+            row_frame,
+            text=f"{servo.sort_positions[box_name]}°",
+            font=('Helvetica', 10, 'bold'),
+            bg='#2b2b2b',
+            fg='#00ff00',
+            width=6
+        )
+        value_label.pack(side='right', padx=(5, 0))
+        
+        # Test-Button
+        test_btn = tk.Button(
+            row_frame,
+            text="Test",
+            font=('Helvetica', 9),
+            bg='#3a7ca5',
+            fg='white',
+            activebackground='#4a8cb5',
+            relief='flat',
+            padx=10,
+            command=lambda bn=box_name: servo.set_sort_position(bn)
+        )
+        test_btn.pack(side='right', padx=(5, 5))
+        
+        # Slider
+        slider = tk.Scale(
+            row_frame,
+            from_=0,
+            to=270,
+            orient='horizontal',
+            bg='#2b2b2b',
+            fg='white',
+            highlightthickness=0,
+            troughcolor='#3a3a3a',
+            activebackground='#4a4a4a',
+            command=lambda val, bn=box_name, vl=value_label: update_slider_value(val, bn, vl)
+        )
+        slider.set(servo.sort_positions[box_name])
+        slider.pack(side='right', fill='x', expand=True, padx=(0, 5))
+        
+        box_sliders[box_name] = slider
+    
+    def update_slider_value(value, box_name, value_label):
+        """Update Slider Anzeige"""
+        value_label.config(text=f"{value}°")
+        servo.sort_positions[box_name] = int(value)
+    
+    # --- Klappen-Servo Steuerung ---
+    gate_frame = tk.LabelFrame(
+        main_frame,
+        text="Klappen-Steuerung",
+        font=('Helvetica', 12, 'bold'),
+        bg='#2b2b2b',
+        fg='white',
+        relief='flat',
+        bd=2
+    )
+    gate_frame.pack(fill='x', pady=(0, 15))
+    
+    gate_control_frame = tk.Frame(gate_frame, bg='#2b2b2b')
+    gate_control_frame.pack(pady=15)
+    
+    # Klappe öffnen Button
+    open_gate_btn = tk.Button(
+        gate_control_frame,
+        text="🔓 Klappe öffnen",
+        font=('Helvetica', 11, 'bold'),
+        bg='#2d6a2e',
+        fg='white',
+        activebackground='#3d7a3e',
+        activeforeground='white',
+        relief='flat',
+        padx=20,
+        pady=10,
+        cursor='hand2',
+        command=servo.open_gate
+    )
+    open_gate_btn.pack(side='left', padx=5)
+    
+    # Klappe schließen Button
+    close_gate_btn = tk.Button(
+        gate_control_frame,
+        text="🔒 Klappe schließen",
+        font=('Helvetica', 11, 'bold'),
+        bg='#8b2e2e',
+        fg='white',
+        activebackground='#9b3e3e',
+        activeforeground='white',
+        relief='flat',
+        padx=20,
+        pady=10,
+        cursor='hand2',
+        command=servo.close_gate
+    )
+    close_gate_btn.pack(side='left', padx=5)
+    
+    # --- Buttons unten ---
+    button_frame = tk.Frame(main_frame, bg='#1e1e1e')
+    button_frame.pack(pady=(15, 0))
+    
+    # Schließen Button
+    close_btn = tk.Button(
+        button_frame,
+        text="Schließen",
+        font=('Helvetica', 11),
+        bg='#3a3a3a',
+        fg='white',
+        activebackground='#4a4a4a',
+        activeforeground='white',
+        relief='flat',
+        padx=30,
+        pady=8,
+        cursor='hand2',
+        command=settings_win.destroy
+    )
+    close_btn.pack()
+    
+    # Fenster zentrieren
+    settings_win.update_idletasks()
+    x = parent_root.winfo_x() + (parent_root.winfo_width() // 2) - (settings_win.winfo_width() // 2)
+    y = parent_root.winfo_y() + (parent_root.winfo_height() // 2) - (settings_win.winfo_height() // 2)
+    settings_win.geometry(f"+{x}+{y}")
+    
+    # Fenster modal machen
+    settings_win.transient(parent_root)
+    settings_win.grab_set()
+
 # Hauptcontainer (minimal Padding für 7-Zoll Display)
 main_container = tk.Frame(root, bg='#1e1e1e')
 main_container.pack(fill='both', expand=True, padx=5, pady=5)
@@ -1725,7 +1912,25 @@ title_label = tk.Label(
     bg='#1e1e1e',
     fg='white'
 )
-title_label.pack()
+title_label.pack(side='left', expand=True)
+
+# Settings-Button rechts oben
+settings_button = tk.Button(
+    header_frame,
+    text="⚙️",
+    font=('Helvetica', 16),
+    bg='#3a3a3a',
+    fg='white',
+    activebackground='#4a4a4a',
+    activeforeground='white',
+    relief='flat',
+    bd=0,
+    padx=15,
+    pady=5,
+    cursor='hand2',
+    command=lambda: open_settings_window(root)
+)
+settings_button.pack(side='right')
 
 # Set-Eingabe Bereich (kompakt)
 set_input_frame = tk.Frame(main_container, bg='#2b2b2b', relief='flat', bd=1)
