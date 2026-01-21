@@ -132,9 +132,29 @@ SERVO_GATE_PIN = {
     "description": "Klappe/Schleuse Servo - Software-PWM"
 }
 
+# Rüttler/Vibration Pins
+VIBRATION_1_PIN = {
+    "wiring": 4,   # WiringPi 4
+    "bcm": 23,     # BCM GPIO23
+    "physical": 16,
+    "function": "GPIO",
+    "pwm_type": "software",
+    "description": "Rüttler 1 - Software-PWM"
+}
+
+VIBRATION_2_PIN = {
+    "wiring": 5,   # WiringPi 5
+    "bcm": 24,     # BCM GPIO24
+    "physical": 18,
+    "function": "GPIO",
+    "pwm_type": "software",
+    "description": "Rüttler 2 - Software-PWM"
+}
+
 # INFO: 
 # - SERVO_SORT verwendet Hardware-PWM1 (präzise für 270° Servo)
 # - SERVO_GATE verwendet Software-PWM (ausreichend für Klappen-Servo)
+# - VIBRATION verwendet Software-PWM (aktiv nur in WARTEN_AUF_TEIL)
 # - Kein Pin-Konflikt mehr!
 
 # --- Stepper Motor Controller ---
@@ -707,6 +727,148 @@ def get_stepper_controller():
         _stepper_controller = StepperController()
         _stepper_controller.init_gpio()
     return _stepper_controller
+
+# --- Vibration/Rüttler Controller ---
+class VibrationController:
+    """
+    Dual Vibration Motor Controller für Teile-Förderung.
+    - Beide Rüttler: Software-PWM
+    - Nur aktiv in WARTEN_AUF_TEIL State (wenn auf Teile gewartet wird)
+    - Duty Cycle einstellbar (50% Standard)
+    """
+    def __init__(self):
+        self.vib1_pin = None
+        self.vib2_pin = None
+        self.vib1_pwm = None  # Software-PWM Objekt
+        self.vib2_pwm = None  # Software-PWM Objekt
+        self.pwm_frequency = 1000  # 1kHz für Vibrationsmotoren
+        self.gpio_initialized = False
+        self.is_running = False
+        
+        # Duty Cycle (0-100%) - einstellbar
+        self.duty_cycle = 50  # Standard: 50%
+    
+    def init_vibration(self):
+        """Initialisiert beide Rüttler"""
+        if self.gpio_initialized:
+            return True
+        
+        if not GPIO_AVAILABLE:
+            print("WARNUNG: RPi.GPIO nicht verfügbar - Rüttler Simulationsmodus")
+            self.gpio_initialized = False
+            return False
+        
+        try:
+            # Rüttler 1: Software-PWM auf GPIO23
+            self.vib1_pin = VIBRATION_1_PIN["bcm"]
+            GPIO.setup(self.vib1_pin, GPIO.OUT)
+            self.vib1_pwm = GPIO.PWM(self.vib1_pin, self.pwm_frequency)
+            self.vib1_pwm.start(0)  # Start mit 0% Duty
+            
+            # Rüttler 2: Software-PWM auf GPIO24
+            self.vib2_pin = VIBRATION_2_PIN["bcm"]
+            GPIO.setup(self.vib2_pin, GPIO.OUT)
+            self.vib2_pwm = GPIO.PWM(self.vib2_pin, self.pwm_frequency)
+            self.vib2_pwm.start(0)  # Start mit 0% Duty
+            
+            self.gpio_initialized = True
+            print(f"Rüttler initialisiert auf GPIO{self.vib1_pin} und GPIO{self.vib2_pin}")
+            return True
+        except Exception as e:
+            print(f"Fehler bei Rüttler-Initialisierung: {e}")
+            self.gpio_initialized = False
+            return False
+    
+    def start(self):
+        """Startet beide Rüttler mit aktuellem Duty Cycle"""
+        if not self.gpio_initialized:
+            print("Rüttler nicht initialisiert - kann nicht starten")
+            return
+        
+        if self.is_running:
+            return  # Bereits aktiv
+        
+        try:
+            self.vib1_pwm.ChangeDutyCycle(self.duty_cycle)
+            self.vib2_pwm.ChangeDutyCycle(self.duty_cycle)
+            self.is_running = True
+            print(f"Rüttler gestartet mit {self.duty_cycle}% Duty Cycle")
+        except Exception as e:
+            print(f"Fehler beim Starten der Rüttler: {e}")
+    
+    def stop(self):
+        """Stoppt beide Rüttler"""
+        if not self.gpio_initialized:
+            return
+        
+        if not self.is_running:
+            return  # Bereits gestoppt
+        
+        try:
+            self.vib1_pwm.ChangeDutyCycle(0)
+            self.vib2_pwm.ChangeDutyCycle(0)
+            self.is_running = False
+            print("Rüttler gestoppt")
+        except Exception as e:
+            print(f"Fehler beim Stoppen der Rüttler: {e}")
+    
+    def set_duty_cycle(self, duty):
+        """Setzt Duty Cycle (0-100%) - wird sofort angewendet wenn aktiv"""
+        self.duty_cycle = max(0, min(100, duty))  # Clamp auf 0-100
+        
+        if self.is_running and self.gpio_initialized:
+            try:
+                self.vib1_pwm.ChangeDutyCycle(self.duty_cycle)
+                self.vib2_pwm.ChangeDutyCycle(self.duty_cycle)
+                print(f"Rüttler Duty Cycle auf {self.duty_cycle}% gesetzt")
+            except Exception as e:
+                print(f"Fehler beim Setzen des Duty Cycles: {e}")
+    
+    def test(self, duration=2.0):
+        """Testet Rüttler für eine bestimmte Zeit (Sekunden)"""
+        if not self.gpio_initialized:
+            print("Rüttler nicht initialisiert - Test nicht möglich")
+            return
+        
+        print(f"Teste Rüttler für {duration}s mit {self.duty_cycle}% Duty Cycle...")
+        was_running = self.is_running
+        
+        if not was_running:
+            self.start()
+        
+        time.sleep(duration)
+        
+        if not was_running:
+            self.stop()
+        
+        print("Rüttler-Test abgeschlossen")
+    
+    def cleanup(self):
+        """GPIO Cleanup"""
+        self.stop()
+        if self.gpio_initialized:
+            try:
+                if self.vib1_pwm:
+                    self.vib1_pwm.stop()
+                if self.vib2_pwm:
+                    self.vib2_pwm.stop()
+                
+                GPIO.cleanup([self.vib1_pin, self.vib2_pin])
+                print("Rüttler GPIO bereinigt")
+            except:
+                pass
+        self.gpio_initialized = False
+
+# Globale Vibration-Instanz
+_vibration_controller = None
+
+def get_vibration_controller():
+    """Gibt Singleton Vibration Controller zurück"""
+    global _vibration_controller
+    if _vibration_controller is None:
+        _vibration_controller = VibrationController()
+        _vibration_controller.init_vibration()
+    return _vibration_controller
 
 # --- Automatik-Grundgerüst ---
 
@@ -1715,7 +1877,7 @@ def open_settings_window(parent_root):
     """Öffnet das Einstellungsfenster für Servo-Konfiguration"""
     settings_win = tk.Toplevel(parent_root)
     settings_win.title("Servo Einstellungen")
-    settings_win.geometry("600x500")
+    settings_win.geometry("600x650")
     settings_win.configure(bg='#1e1e1e')
     settings_win.resizable(False, False)
     
@@ -1865,6 +2027,88 @@ def open_settings_window(parent_root):
         command=servo.close_gate
     )
     close_gate_btn.pack(side='left', padx=5)
+    
+    # --- Rüttler Steuerung ---
+    vibration_frame = tk.LabelFrame(
+        main_frame,
+        text="Rüttler-Steuerung",
+        font=('Helvetica', 12, 'bold'),
+        bg='#2b2b2b',
+        fg='white',
+        relief='flat',
+        bd=2
+    )
+    vibration_frame.pack(fill='x', pady=(0, 15))
+    
+    # Vibration Controller Referenz
+    vibration = get_vibration_controller()
+    
+    # Duty Cycle Slider
+    duty_row_frame = tk.Frame(vibration_frame, bg='#2b2b2b')
+    duty_row_frame.pack(fill='x', padx=10, pady=10)
+    
+    duty_label = tk.Label(
+        duty_row_frame,
+        text="Intensität (Duty Cycle):",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    duty_label.pack(side='left')
+    
+    # Wert-Anzeige
+    duty_value_label = tk.Label(
+        duty_row_frame,
+        text=f"{vibration.duty_cycle}%",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#00ff00',
+        width=6
+    )
+    duty_value_label.pack(side='right', padx=(5, 0))
+    
+    # Duty Cycle Slider
+    duty_slider = tk.Scale(
+        duty_row_frame,
+        from_=0,
+        to=100,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a3a',
+        activebackground='#4a4a4a',
+        command=lambda val: update_duty_cycle(val, duty_value_label, vibration)
+    )
+    duty_slider.set(vibration.duty_cycle)
+    duty_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+    
+    def update_duty_cycle(value, value_label, vib_ctrl):
+        """Update Duty Cycle"""
+        value_label.config(text=f"{value}%")
+        vib_ctrl.set_duty_cycle(int(value))
+    
+    # Test Button
+    test_row_frame = tk.Frame(vibration_frame, bg='#2b2b2b')
+    test_row_frame.pack(pady=(0, 15))
+    
+    test_vibration_btn = tk.Button(
+        test_row_frame,
+        text="🔊 Rüttler testen (2 Sek.)",
+        font=('Helvetica', 11, 'bold'),
+        bg='#6a4c2e',
+        fg='white',
+        activebackground='#7a5c3e',
+        activeforeground='white',
+        relief='flat',
+        padx=20,
+        pady=10,
+        cursor='hand2',
+        command=lambda: vibration.test(duration=2.0)
+    )
+    test_vibration_btn.pack()
     
     # --- Buttons unten ---
     button_frame = tk.Frame(main_frame, bg='#1e1e1e')
@@ -2605,6 +2849,10 @@ class AutomationController:
         self.servo = get_servo_controller()
         print("Servo Controller bereit")
         
+        # Vibration Controller initialisieren
+        self.vibration = get_vibration_controller()
+        print("Vibration Controller bereit")
+        
         # Debug-Labels Referenzen speichern
         self.stepper_status_label = stepper_status_lbl
         self.sensor_status_label = sensor_status_lbl
@@ -3054,6 +3302,13 @@ class AutomationController:
         except Exception as e:
             print(f"Stepper Stop Fehler: {e}")
         
+        # Rüttler stoppen
+        try:
+            self.vibration.stop()
+            print("Rüttler gestoppt")
+        except Exception as e:
+            print(f"Rüttler Stop Fehler: {e}")
+        
         # Verstecke Fortschrittsbereich
         self.progress_frame.pack_forget()
         
@@ -3110,7 +3365,15 @@ class AutomationController:
             case AutomationState.WARTEN_AUF_TEIL:
                 # Schieber bewegt sich kontinuierlich (Teile nachschieben)
                 # bis Motion Detection ein Teil erkennt
+                # RÜTTLER AKTIV in diesem State
                 if self.motion_detection_active:
+                    # Starte Rüttler falls noch nicht gestartet
+                    if not self.vibration.is_running:
+                        try:
+                            self.vibration.start()
+                        except Exception as e:
+                            print(f"Rüttler Start Fehler: {e}")
+                    
                     # Starte Stepper falls noch nicht gestartet
                     if not self.stepper.is_moving:
                         try:
@@ -3120,14 +3383,19 @@ class AutomationController:
                     
                     # Motion Detection: Erkenne Teileinwurf durch Bildänderung
                     if self._detect_motion():
-                        # Teil erkannt - STOPPE Schieber sofort!
+                        # Teil erkannt - STOPPE Schieber und Rüttler sofort!
                         self.current_status_label.config(text="✔ Teil erkannt - Schieber stoppt!", fg='#4caf50')
-                        print("Teil-Einwurf erkannt - Stoppe Schieber")
+                        print("Teil-Einwurf erkannt - Stoppe Schieber und Rüttler")
                         
                         try:
                             self.stepper.stop()
                         except Exception as e:
                             print(f"Stepper Stop Fehler: {e}")
+                        
+                        try:
+                            self.vibration.stop()
+                        except Exception as e:
+                            print(f"Rüttler Stop Fehler: {e}")
                         
                         # Warte bis Teil ruhig liegt
                         self._wait_for_part_settled()
@@ -3155,12 +3423,17 @@ class AutomationController:
                     self.current_status_label.config(text="✗ Fehler bei Bildaufnahme", fg='#f44336')
                     # LED zurück auf 30%
                     self._set_led_brightness(30)
-                    # Stepper wieder starten
+                    # Stepper und Rüttler wieder starten
                     try:
                         self.stepper.start_continuous_push()
                         print("Stepper nach Bildaufnahme-Fehler wieder gestartet")
                     except Exception as e:
                         print(f"Stepper Restart Fehler: {e}")
+                    try:
+                        self.vibration.start()
+                        print("Rüttler nach Bildaufnahme-Fehler wieder gestartet")
+                    except Exception as e:
+                        print(f"Rüttler Restart Fehler: {e}")
                     # Motion Detection reaktivieren
                     self.motion_detection_active = True
                     self.previous_frame = None
