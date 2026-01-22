@@ -461,7 +461,6 @@ class StepperController:
                 # PWM stoppen für saubere Richtungsänderung
                 if self.pwm_object:
                     self.pwm_object.stop()
-                time.sleep(1)  # 1000ms Pause
                 
                 # Richtung ändern
                 GPIO.output(self.dir_pin, GPIO.HIGH)  # Richtung Hoch
@@ -480,7 +479,6 @@ class StepperController:
                 # PWM stoppen für saubere Richtungsänderung
                 if self.pwm_object:
                     self.pwm_object.stop()
-                time.sleep(1)  # 1000ms Pause
                 
                 # Richtung ändern
                 GPIO.output(self.dir_pin, GPIO.LOW)  # Richtung Runter
@@ -540,8 +538,8 @@ class ServoController:
         
         # Positionen für Klappen-Servo
         self.gate_positions = {
-            "open": 90,     # Klappe offen
-            "closed": 0     # Klappe geschlossen
+            "open": 0,      # Klappe offen
+            "closed": 90    # Klappe geschlossen
         }
     
     def init_servos(self):
@@ -574,7 +572,7 @@ class ServoController:
             
             # Setze auf Standardpositionen
             self.set_sort_position("center")
-            self.set_gate_position("closed")
+            self.close_gate()  # Klappe geschlossen halten für Haltemoment
             
             return True
             
@@ -654,7 +652,7 @@ class ServoController:
             self.gate_pwm.ChangeDutyCycle(duty_cycle)
             print(f"Klappen-Servo: {angle}° (Duty: {duty_cycle:.2f}%)")
             time.sleep(0.3)  # Warte auf Servo-Bewegung
-            self.gate_pwm.ChangeDutyCycle(0)  # Stoppe Puls
+            # KEIN ChangeDutyCycle(0) - Servo hält Position für Haltemoment
             return True
             
         except Exception as e:
@@ -741,7 +739,7 @@ class VibrationController:
         self.vib2_pin = None
         self.vib1_pwm = None  # Software-PWM Objekt
         self.vib2_pwm = None  # Software-PWM Objekt
-        self.pwm_frequency = 1000  # 1kHz für Vibrationsmotoren
+        self.pwm_frequency = 100  # 100Hz für Vibrationsmotoren
         self.gpio_initialized = False
         self.is_running = False
         
