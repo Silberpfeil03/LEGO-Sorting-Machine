@@ -102,15 +102,15 @@ SENSOR_LOWER_PIN = {
     "bcm": 27,     # BCM GPIO27
     "physical": 13,
     "function": "GPIO_INPUT",
-    "description": "Unterer Anschlag Sensor - NO (0=unten angeschlagen)"
+    "description": "Unterer Anschlag Sensor - NO (1=unten angeschlagen)"
 }
 
 SENSOR_UPPER_PIN = {
-    "wiring": 3,   # WiringPi 3
-    "bcm": 22,     # BCM GPIO22
-    "physical": 15,
+    "wiring": 13,  # WiringPi 13
+    "bcm": 23,     # BCM GPIO23
+    "physical": 33,
     "function": "GPIO_INPUT",
-    "description": "Oberer Anschlag Sensor - NC (1=oben angeschlagen)"
+    "description": "Oberer Anschlag Sensor - Pull-Down"
 }
 
 # Servo/Sortier Pins
@@ -174,13 +174,17 @@ class StepperController:
         self.is_moving = False
         
         # Motor-Parameter
-        self.default_speed_hz = 1000  # Standard Geschwindigkeit in Hz
+        self.default_speed_hz = 500  # Standard Geschwindigkeit in Hz (50% von 1000 Hz)
         self.steps_per_cycle = 200   # Schritte für eine volle Bewegung (anpassbar)
+        
+        # Geschwindigkeits-Einstellung (10-100%)
+        self.speed_percentage = 50  # Standard: 50%
+        self.max_speed_hz = 1000    # Maximale Geschwindigkeit bei 100%
         
         # Kontinuierliche Bewegung mit Auto-Reverse
         self.continuous_mode = False
         self.current_direction = "unknown"  # "up", "down", "unknown"
-        self.continuous_speed_hz = 1000  # Geschwindigkeit für kontinuierlichen Betrieb
+        self.continuous_speed_hz = 500  # Geschwindigkeit für kontinuierlichen Betrieb (wird aus speed_percentage berechnet)
         
     def init_gpio(self):
         """Initialisiert GPIO für Stepper Motor"""
@@ -492,6 +496,28 @@ class StepperController:
         except Exception as e:
             print(f"Fehler beim Update der kontinuierlichen Bewegung: {e}")
     
+    def set_speed_percentage(self, percentage):
+        """
+        Setzt die Geschwindigkeit in Prozent (10-100%).
+        10% = 100 Hz, 100% = 1000 Hz
+        """
+        # Begrenze auf 10-100%
+        percentage = max(10, min(100, percentage))
+        self.speed_percentage = percentage
+        
+        # Berechne Hz-Wert (10% = 100 Hz, 100% = 1000 Hz)
+        self.default_speed_hz = int((percentage / 100.0) * self.max_speed_hz)
+        self.continuous_speed_hz = self.default_speed_hz
+        
+        print(f"Schieber-Geschwindigkeit auf {percentage}% ({self.default_speed_hz} Hz) gesetzt")
+        
+        # Wenn kontinuierlicher Modus läuft, aktualisiere Frequenz
+        if self.continuous_mode and self.gpio_initialized and self.pwm_object:
+            try:
+                self.pwm_object.ChangeFrequency(self.continuous_speed_hz)
+            except Exception as e:
+                print(f"Fehler beim Aktualisieren der Geschwindigkeit: {e}")
+    
     def stop(self):
         """Stoppt Motor sofort"""
         if self.pwm_object:
@@ -516,7 +542,7 @@ class StepperController:
 class ServoController:
     """
     Dual Servo Controller für Sortierung und Klappe.
-    - Sortier-Servo: Hardware-PWM (270° Servo, präzise Positionierung)
+    - Sortier-Servo: Hardware-PWM (180° Servo, präzise Positionierung)
     - Klappen-Servo: Software-PWM (einfache On/Off Bewegung)
     """
     def __init__(self):
@@ -527,13 +553,13 @@ class ServoController:
         self.servo_frequency = 50  # 50Hz Standard für Servos
         self.gpio_initialized = False
         
-        # Positionen für 270° Sortier-Servo (kann angepasst werden)
+        # Positionen für 180° Sortier-Servo (kann angepasst werden)
         self.sort_positions = {
             "box1": 0,      # Kiste 1
-            "box2": 90,     # Kiste 2
-            "box3": 180,    # Kiste 3
-            "box4": 270,    # Kiste 4 (falls 270° Servo)
-            "center": 135   # Mittelposition
+            "box2": 60,     # Kiste 2
+            "box3": 120,    # Kiste 3
+            "box4": 180,    # Kiste 4 (Ausschuss)
+            "center": 90    # Mittelposition
         }
         
         # Positionen für Klappen-Servo
@@ -585,26 +611,25 @@ class ServoController:
     
     def _angle_to_duty_cycle(self, angle):
         """
-        Konvertiert Winkel (0-270°) zu Duty Cycle (2.5% - 12.5%)
+        Konvertiert Winkel (0-180°) zu Duty Cycle (2.5% - 12.5%)
         
-        Standard Servo Mapping:
+        Standard 180° Servo Mapping:
         - 0°   = 2.5% Duty Cycle (0.5ms Puls bei 50Hz)
         - 90°  = 7.5% Duty Cycle (1.5ms Puls)
         - 180° = 12.5% Duty Cycle (2.5ms Puls)
-        - 270° = 17.5% Duty Cycle (3.5ms Puls, nur für 270° Servos)
         """
-        # Begrenze Winkel auf 0-270°
-        angle = max(0, min(270, angle))
+        # Begrenze Winkel auf 0-180°
+        angle = max(0, min(180, angle))
         
-        # Lineare Interpolation: 0° → 2.5%, 270° → 17.5%
-        duty_cycle = 2.5 + (angle / 270.0) * 15.0
+        # Lineare Interpolation: 0° → 2.5%, 180° → 12.5%
+        duty_cycle = 2.5 + (angle / 180.0) * 10.0
         
         return duty_cycle
     
     def set_sort_angle(self, angle):
         """
-        Setzt Sortier-Servo auf bestimmten Winkel (0-270°)
-        :param angle: Winkel in Grad (0-270)
+        Setzt Sortier-Servo auf bestimmten Winkel (0-180°)
+        :param angle: Winkel in Grad (0-180)
         """
         if not self.gpio_initialized:
             print("SIMULATION: Sortier-Servo → {angle}°")
@@ -2016,7 +2041,7 @@ def open_settings_window(parent_root, automation_controller=None):
     # --- Sortier-Servo Positionen ---
     sort_frame = tk.LabelFrame(
         main_tab,
-        text="Kisten-Positionen (0-270°)",
+        text="Kisten-Positionen (0-180°)",
         font=('Helvetica', 12, 'bold'),
         bg='#2b2b2b',
         fg='white',
@@ -2075,7 +2100,7 @@ def open_settings_window(parent_root, automation_controller=None):
         slider = tk.Scale(
             row_frame,
             from_=0,
-            to=270,
+            to=180,
             orient='horizontal',
             bg='#2b2b2b',
             fg='white',
@@ -2093,6 +2118,81 @@ def open_settings_window(parent_root, automation_controller=None):
         """Update Slider Anzeige"""
         value_label.config(text=f"{value}°")
         servo.sort_positions[box_name] = int(value)
+    
+    # --- Schieber Geschwindigkeit ---
+    stepper = get_stepper_controller()
+    
+    stepper_frame = tk.LabelFrame(
+        main_tab,
+        text="Schieber-Geschwindigkeit",
+        font=('Helvetica', 12, 'bold'),
+        bg='#2b2b2b',
+        fg='white',
+        relief='flat',
+        bd=2
+    )
+    stepper_frame.pack(fill='x', pady=(0, 15), padx=10)
+    
+    # Info-Text
+    stepper_info = tk.Label(
+        stepper_frame,
+        text="Geschwindigkeit des Schiebers beim Teile-Transport",
+        font=('Helvetica', 9),
+        bg='#2b2b2b',
+        fg='#cccccc',
+        justify='left'
+    )
+    stepper_info.pack(pady=(10, 5), padx=10)
+    
+    # Geschwindigkeits-Slider
+    speed_row_frame = tk.Frame(stepper_frame, bg='#2b2b2b')
+    speed_row_frame.pack(fill='x', padx=10, pady=10)
+    
+    speed_label = tk.Label(
+        speed_row_frame,
+        text="Geschwindigkeit:",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    speed_label.pack(side='left')
+    
+    # Wert-Anzeige
+    speed_value_label = tk.Label(
+        speed_row_frame,
+        text=f"{stepper.speed_percentage}% ({stepper.default_speed_hz} Hz)",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#00ff00',
+        width=15
+    )
+    speed_value_label.pack(side='right', padx=(5, 0))
+    
+    # Slider (10-100%)
+    speed_slider = tk.Scale(
+        speed_row_frame,
+        from_=10,
+        to=100,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a3a',
+        activebackground='#4a4a4a',
+        resolution=5,  # Schritte von 5%
+        command=lambda val: update_stepper_speed(val, speed_value_label, stepper)
+    )
+    speed_slider.set(stepper.speed_percentage)
+    speed_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+    
+    def update_stepper_speed(value, value_label, stepper_ctrl):
+        """Update Schieber-Geschwindigkeit"""
+        percentage = int(value)
+        hz_value = int((percentage / 100.0) * stepper_ctrl.max_speed_hz)
+        value_label.config(text=f"{percentage}% ({hz_value} Hz)")
+        stepper_ctrl.set_speed_percentage(percentage)
     
     # --- Klappen-Servo Steuerung ---
     gate_frame = tk.LabelFrame(
@@ -2479,15 +2579,197 @@ def open_settings_window(parent_root, automation_controller=None):
         # Starte Preview-Updates wenn bereits aktiviert
         if automation_controller.preview_enabled:
             preview_update_job[0] = settings_win.after(100, update_preview_image)
-        
-        # Cleanup beim Schließen des Fensters
-        def on_closing():
+    
+    # --- Sensor Status Anzeige ---
+    sensor_frame = tk.LabelFrame(
+        debug_tab,
+        text="Sensor Status (Live)",
+        font=('Helvetica', 12, 'bold'),
+        bg='#2b2b2b',
+        fg='white',
+        relief='flat',
+        bd=2
+    )
+    sensor_frame.pack(fill='x', pady=(0, 15), padx=10)
+    
+    # Info-Text
+    sensor_info_label = tk.Label(
+        sensor_frame,
+        text="Live-Anzeige der Sensor-Werte. Updates alle 200ms.",
+        font=('Helvetica', 9),
+        bg='#2b2b2b',
+        fg='#cccccc',
+        justify='left'
+    )
+    sensor_info_label.pack(pady=(10, 5), padx=10)
+    
+    # Sensor-Anzeige Container
+    sensor_display_frame = tk.Frame(sensor_frame, bg='#2b2b2b')
+    sensor_display_frame.pack(pady=(10, 15), padx=10, fill='x')
+    
+    # Unterer Sensor
+    lower_sensor_frame = tk.Frame(sensor_display_frame, bg='#1a1a1a', relief='solid', bd=2)
+    lower_sensor_frame.pack(side='left', expand=True, fill='both', padx=(0, 5))
+    
+    lower_sensor_title = tk.Label(
+        lower_sensor_frame,
+        text="Unterer Sensor (NO)",
+        font=('Helvetica', 10, 'bold'),
+        bg='#1a1a1a',
+        fg='white'
+    )
+    lower_sensor_title.pack(pady=(10, 5))
+    
+    lower_sensor_pin_label = tk.Label(
+        lower_sensor_frame,
+        text=f"GPIO {SENSOR_LOWER_PIN['bcm']} (WiringPi {SENSOR_LOWER_PIN['wiring']})",
+        font=('Helvetica', 8),
+        bg='#1a1a1a',
+        fg='#888888'
+    )
+    lower_sensor_pin_label.pack(pady=(0, 10))
+    
+    lower_sensor_value_label = tk.Label(
+        lower_sensor_frame,
+        text="---",
+        font=('Helvetica', 14, 'bold'),
+        bg='#1a1a1a',
+        fg='#888888',
+        width=15
+    )
+    lower_sensor_value_label.pack(pady=(5, 5))
+    
+    lower_sensor_status_label = tk.Label(
+        lower_sensor_frame,
+        text="Status: ---",
+        font=('Helvetica', 9),
+        bg='#1a1a1a',
+        fg='#888888'
+    )
+    lower_sensor_status_label.pack(pady=(5, 10))
+    
+    # Oberer Sensor
+    upper_sensor_frame = tk.Frame(sensor_display_frame, bg='#1a1a1a', relief='solid', bd=2)
+    upper_sensor_frame.pack(side='left', expand=True, fill='both', padx=(5, 0))
+    
+    upper_sensor_title = tk.Label(
+        upper_sensor_frame,
+        text="Oberer Sensor (Pull-Down)",
+        font=('Helvetica', 10, 'bold'),
+        bg='#1a1a1a',
+        fg='white'
+    )
+    upper_sensor_title.pack(pady=(10, 5))
+    
+    upper_sensor_pin_label = tk.Label(
+        upper_sensor_frame,
+        text=f"GPIO {SENSOR_UPPER_PIN['bcm']} (WiringPi {SENSOR_UPPER_PIN['wiring']})",
+        font=('Helvetica', 8),
+        bg='#1a1a1a',
+        fg='#888888'
+    )
+    upper_sensor_pin_label.pack(pady=(0, 10))
+    
+    upper_sensor_value_label = tk.Label(
+        upper_sensor_frame,
+        text="---",
+        font=('Helvetica', 14, 'bold'),
+        bg='#1a1a1a',
+        fg='#888888',
+        width=15
+    )
+    upper_sensor_value_label.pack(pady=(5, 5))
+    
+    upper_sensor_status_label = tk.Label(
+        upper_sensor_frame,
+        text="Status: ---",
+        font=('Helvetica', 9),
+        bg='#1a1a1a',
+        fg='#888888'
+    )
+    upper_sensor_status_label.pack(pady=(5, 10))
+    
+    # Update-Job für Sensor-Werte
+    sensor_update_job = [None]
+    
+    def update_sensor_display():
+        """Aktualisiert die Sensor-Anzeige"""
+        try:
+            if sensor_update_job[0] is not None:
+                stepper = get_stepper_controller()
+                
+                if stepper.gpio_initialized and GPIO_AVAILABLE:
+                    # Sensor-Werte lesen
+                    lower_val = GPIO.input(SENSOR_LOWER_PIN["bcm"])
+                    upper_val = GPIO.input(SENSOR_UPPER_PIN["bcm"])
+                    
+                    # Unterer Sensor (NO: 0=angeschlagen, 1=frei)
+                    lower_sensor_value_label.config(
+                        text=f"{'HIGH (1)' if lower_val else 'LOW (0)'}",
+                        fg='#00ff00' if lower_val else '#ff4444'
+                    )
+                    
+                    if lower_val == 0:
+                        lower_sensor_status_label.config(
+                            text="Status: 🔴 ANGESCHLAGEN",
+                            fg='#ff4444'
+                        )
+                    else:
+                        lower_sensor_status_label.config(
+                            text="Status: 🟢 FREI",
+                            fg='#00ff00'
+                        )
+                    
+                    # Oberer Sensor (Pull-Down: 1=angeschlagen, 0=frei)
+                    upper_sensor_value_label.config(
+                        text=f"{'HIGH (1)' if upper_val else 'LOW (0)'}",
+                        fg='#00ff00' if upper_val else '#ff4444'
+                    )
+                    
+                    if upper_val == 1:
+                        upper_sensor_status_label.config(
+                            text="Status: 🔴 ANGESCHLAGEN",
+                            fg='#ff4444'
+                        )
+                    else:
+                        upper_sensor_status_label.config(
+                            text="Status: 🟢 FREI",
+                            fg='#00ff00'
+                        )
+                else:
+                    # GPIO nicht verfügbar - Simulationsmodus
+                    lower_sensor_value_label.config(text="SIMULATION", fg='#888888')
+                    lower_sensor_status_label.config(text="Status: GPIO nicht verfügbar", fg='#888888')
+                    upper_sensor_value_label.config(text="SIMULATION", fg='#888888')
+                    upper_sensor_status_label.config(text="Status: GPIO nicht verfügbar", fg='#888888')
+                
+                # Nächstes Update in 200ms
+                sensor_update_job[0] = settings_win.after(200, update_sensor_display)
+        except Exception as e:
+            print(f"Fehler beim Aktualisieren der Sensor-Anzeige: {e}")
+            # Bei Fehler trotzdem weiter versuchen
+            if sensor_update_job[0] is not None:
+                sensor_update_job[0] = settings_win.after(500, update_sensor_display)
+    
+    # Starte Sensor-Updates
+    sensor_update_job[0] = settings_win.after(100, update_sensor_display)
+    
+    # Cleanup beim Schließen des Fensters
+    def on_closing():
+        # Stoppe Preview-Updates
+        if automation_controller and 'preview_update_job' in locals():
             if preview_update_job[0] is not None:
                 settings_win.after_cancel(preview_update_job[0])
                 preview_update_job[0] = None
-            settings_win.destroy()
         
-        settings_win.protocol("WM_DELETE_WINDOW", on_closing)
+        # Stoppe Sensor-Updates
+        if sensor_update_job[0] is not None:
+            settings_win.after_cancel(sensor_update_job[0])
+            sensor_update_job[0] = None
+        
+        settings_win.destroy()
+    
+    settings_win.protocol("WM_DELETE_WINDOW", on_closing)
     
     # --- Buttons unten ---
     button_frame = tk.Frame(main_frame, bg='#1e1e1e')
@@ -3199,7 +3481,7 @@ class AutomationController:
         
         # Motion Detection Variablen
         self.previous_frame = None
-        self.motion_threshold = 2000  # Anzahl geänderter Pixel für Erkennung
+        self.motion_threshold = 1000  # Anzahl geänderter Pixel für Erkennung (empfindlicher)
         self.motion_detection_active = False
         self.part_detected = False
         self.last_motion_time = 0
@@ -3669,6 +3951,9 @@ class AutomationController:
         self.running = False
         self.paused = False
         
+        # State zurücksetzen
+        self.state = AutomationState.INIT
+        
         # Motion Detection deaktivieren
         self.motion_detection_active = False
         self.previous_frame = None
@@ -3747,6 +4032,11 @@ class AutomationController:
                 # Schieber bewegt sich kontinuierlich (Teile nachschieben)
                 # bis Motion Detection ein Teil erkennt
                 # RÜTTLER AKTIV in diesem State mit Pattern (2s rütteln / 1s Pause)
+                
+                # Sicherheitsprüfung: Wenn nicht mehr running, nichts starten
+                if not self.running:
+                    return
+                
                 if self.motion_detection_active:
                     # Starte Rüttler falls noch nicht gestartet
                     if not self.vibration.pattern_active:
@@ -3799,13 +4089,13 @@ class AutomationController:
                         # Weiter zur Bildaufnahme
                         self.state = AutomationState.BILD_AUFNEHMEN
                     else:
-                        # Kleine Pause um CPU zu schonen (ca. 10 FPS)
-                        time.sleep(0.1)
+                        # Kleine Pause um CPU zu schonen (ca. 20 FPS)
+                        time.sleep(0.05)
 
             case AutomationState.BILD_AUFNEHMEN:
                 # LED auf 100% für optimale Bildqualität
                 self._set_led_brightness(100)
-                time.sleep(0.15)  # Kurz warten bis LED stabilisiert ist
+                time.sleep(0.10)  # Kurz warten bis LED stabilisiert ist
                 
                 # Bild aufnehmen; bei Erfolg weiter zur Erkennung, sonst zurück warten
                 self.current_status_label.config(text="⏳ Nehme Bild auf...", fg='#2196f3')
@@ -3923,7 +4213,7 @@ class AutomationController:
                     print(f"Sortier-Servo auf {target_position}")
                 except Exception as e:
                     print(f"Sortier-Servo Fehler: {e}")
-                
+                time.sleep(1)  # Warte bis Schleuse gestellt ist
                 # Klappe öffnen
                 try:
                     self.servo.open_gate()
