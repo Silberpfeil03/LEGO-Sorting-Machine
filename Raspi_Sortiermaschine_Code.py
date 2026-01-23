@@ -733,6 +733,7 @@ class VibrationController:
     - Beide Rüttler: Software-PWM
     - Nur aktiv in WARTEN_AUF_TEIL State (wenn auf Teile gewartet wird)
     - Duty Cycle einstellbar (50% Standard)
+    - Pattern: 2 Sekunden rütteln, 1 Sekunde Pause, wiederholt
     """
     def __init__(self):
         self.vib1_pin = None
@@ -745,6 +746,13 @@ class VibrationController:
         
         # Duty Cycle (0-100%) - einstellbar
         self.duty_cycle = 50  # Standard: 50%
+        
+        # Pattern-Steuerung für 2s rütteln / 1s Pause
+        self.pattern_active = False
+        self.pattern_start_time = 0
+        self.pattern_phase = "vibrate"  # "vibrate" oder "pause"
+        self.vibrate_duration = 2.0  # 2 Sekunden rütteln
+        self.pause_duration = 1.0    # 1 Sekunde Pause
     
     def init_vibration(self):
         """Initialisiert beide Rüttler"""
@@ -778,34 +786,74 @@ class VibrationController:
             return False
     
     def start(self):
-        """Startet beide Rüttler mit aktuellem Duty Cycle"""
+        """Startet Rüttler im Pattern-Modus (2s rütteln / 1s Pause)"""
         if not self.gpio_initialized:
             print("Rüttler nicht initialisiert - kann nicht starten")
             return
         
-        if self.is_running:
-            return  # Bereits aktiv
+        if self.pattern_active:
+            return  # Bereits im Pattern-Modus
         
         try:
+            self.pattern_active = True
+            self.pattern_phase = "vibrate"
+            self.pattern_start_time = time.time()
+            
+            # Starte mit Rütteln
             self.vib1_pwm.ChangeDutyCycle(self.duty_cycle)
             self.vib2_pwm.ChangeDutyCycle(self.duty_cycle)
             self.is_running = True
-            print(f"Rüttler gestartet mit {self.duty_cycle}% Duty Cycle")
+            print(f"Rüttler Pattern gestartet: {self.vibrate_duration}s rütteln / {self.pause_duration}s Pause")
         except Exception as e:
             print(f"Fehler beim Starten der Rüttler: {e}")
     
-    def stop(self):
-        """Stoppt beide Rüttler"""
-        if not self.gpio_initialized:
+    def update_pattern(self):
+        """
+        Aktualisiert das Rüttel-Pattern (2s rütteln / 1s Pause).
+        MUSS regelmäßig aufgerufen werden wenn pattern_active ist!
+        """
+        if not self.pattern_active or not self.gpio_initialized:
             return
         
-        if not self.is_running:
-            return  # Bereits gestoppt
+        try:
+            elapsed = time.time() - self.pattern_start_time
+            
+            if self.pattern_phase == "vibrate":
+                # Prüfe ob Rüttelphase vorbei ist
+                if elapsed >= self.vibrate_duration:
+                    # Wechsel zu Pause
+                    self.vib1_pwm.ChangeDutyCycle(0)
+                    self.vib2_pwm.ChangeDutyCycle(0)
+                    self.is_running = False
+                    self.pattern_phase = "pause"
+                    self.pattern_start_time = time.time()
+                    print("Rüttler: Pause-Phase")
+            
+            elif self.pattern_phase == "pause":
+                # Prüfe ob Pause vorbei ist
+                if elapsed >= self.pause_duration:
+                    # Wechsel zu Rütteln
+                    self.vib1_pwm.ChangeDutyCycle(self.duty_cycle)
+                    self.vib2_pwm.ChangeDutyCycle(self.duty_cycle)
+                    self.is_running = True
+                    self.pattern_phase = "vibrate"
+                    self.pattern_start_time = time.time()
+                    print("Rüttler: Rüttel-Phase")
+        
+        except Exception as e:
+            print(f"Fehler beim Pattern-Update: {e}")
+    
+    def stop(self):
+        """Stoppt beide Rüttler und beendet Pattern-Modus"""
+        if not self.gpio_initialized:
+            return
         
         try:
             self.vib1_pwm.ChangeDutyCycle(0)
             self.vib2_pwm.ChangeDutyCycle(0)
             self.is_running = False
+            self.pattern_active = False
+            self.pattern_phase = "vibrate"
             print("Rüttler gestoppt")
         except Exception as e:
             print(f"Fehler beim Stoppen der Rüttler: {e}")
@@ -1871,11 +1919,11 @@ root.configure(bg='#1e1e1e')
 root.bind('<Escape>', lambda e: root.quit())
 
 # --- Settings Window Funktion ---
-def open_settings_window(parent_root):
-    """Öffnet das Einstellungsfenster für Servo-Konfiguration"""
+def open_settings_window(parent_root, automation_controller=None):
+    """Öffnet das Einstellungsfenster für Servo-Konfiguration, Teile-Erkennung und Kamera"""
     settings_win = tk.Toplevel(parent_root)
-    settings_win.title("Servo Einstellungen")
-    settings_win.geometry("600x650")
+    settings_win.title("Einstellungen")
+    settings_win.geometry("670x750")
     settings_win.configure(bg='#1e1e1e')
     settings_win.resizable(False, False)
     
@@ -1889,16 +1937,85 @@ def open_settings_window(parent_root):
     # Titel
     title = tk.Label(
         main_frame,
-        text="⚙️ Servo Einstellungen",
+        text="⚙️ Einstellungen",
         font=('Helvetica', 16, 'bold'),
         bg='#1e1e1e',
         fg='white'
     )
-    title.pack(pady=(0, 20))
+    title.pack(pady=(0, 15))
+    
+    # Tab-Widget erstellen
+    notebook = ttk.Notebook(main_frame)
+    notebook.pack(fill='both', expand=True, pady=(0, 15))
+    
+    # Style für Tabs
+    style = ttk.Style()
+    style.theme_use('default')
+    style.configure('TNotebook', background='#1e1e1e', borderwidth=0)
+    style.configure('TNotebook.Tab', background='#2b2b2b', foreground='white', 
+                    padding=[20, 10], font=('Helvetica', 10, 'bold'))
+    style.map('TNotebook.Tab', background=[('selected', '#3a7ca5')], 
+              foreground=[('selected', 'white')])
+    
+    # Tab 1: Haupteinstellungen mit Scrollbar
+    main_tab_container = tk.Frame(notebook, bg='#1e1e1e')
+    notebook.add(main_tab_container, text='Haupteinstellungen')
+    
+    # Canvas und Scrollbar für Haupteinstellungen
+    main_canvas = tk.Canvas(main_tab_container, bg='#1e1e1e', highlightthickness=0)
+    main_scrollbar = tk.Scrollbar(main_tab_container, orient='vertical', command=main_canvas.yview)
+    main_scrollable_frame = tk.Frame(main_canvas, bg='#1e1e1e')
+    
+    main_scrollable_frame.bind(
+        '<Configure>',
+        lambda e: main_canvas.configure(scrollregion=main_canvas.bbox('all'))
+    )
+    
+    main_canvas.create_window((0, 0), window=main_scrollable_frame, anchor='nw')
+    main_canvas.configure(yscrollcommand=main_scrollbar.set)
+    
+    main_canvas.pack(side='left', fill='both', expand=True)
+    main_scrollbar.pack(side='right', fill='y')
+    
+    # Mausrad-Scrolling aktivieren
+    def on_mouse_wheel(event):
+        main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    main_canvas.bind_all("<MouseWheel>", on_mouse_wheel)
+    
+    main_tab = main_scrollable_frame  # Referenz für bestehenden Code
+    
+    # Tab 2: Debug/Erweitert mit Scrollbar
+    debug_tab_container = tk.Frame(notebook, bg='#1e1e1e')
+    notebook.add(debug_tab_container, text='Debug / Erweitert')
+    
+    # Canvas und Scrollbar für Debug
+    debug_canvas = tk.Canvas(debug_tab_container, bg='#1e1e1e', highlightthickness=0)
+    debug_scrollbar = tk.Scrollbar(debug_tab_container, orient='vertical', command=debug_canvas.yview)
+    debug_scrollable_frame = tk.Frame(debug_canvas, bg='#1e1e1e')
+    
+    debug_scrollable_frame.bind(
+        '<Configure>',
+        lambda e: debug_canvas.configure(scrollregion=debug_canvas.bbox('all'))
+    )
+    
+    debug_canvas.create_window((0, 0), window=debug_scrollable_frame, anchor='nw')
+    debug_canvas.configure(yscrollcommand=debug_scrollbar.set)
+    
+    debug_canvas.pack(side='left', fill='both', expand=True)
+    debug_scrollbar.pack(side='right', fill='y')
+    
+    # Mausrad-Scrolling aktivieren
+    def on_debug_mouse_wheel(event):
+        debug_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    debug_canvas.bind_all("<MouseWheel>", on_debug_mouse_wheel)
+    
+    debug_tab = debug_scrollable_frame  # Referenz für bestehenden Code
+    
+    # ==================== HAUPTEINSTELLUNGEN TAB ====================
     
     # --- Sortier-Servo Positionen ---
     sort_frame = tk.LabelFrame(
-        main_frame,
+        main_tab,
         text="Kisten-Positionen (0-270°)",
         font=('Helvetica', 12, 'bold'),
         bg='#2b2b2b',
@@ -1906,7 +2023,7 @@ def open_settings_window(parent_root):
         relief='flat',
         bd=2
     )
-    sort_frame.pack(fill='x', pady=(0, 15))
+    sort_frame.pack(fill='x', pady=(10, 15), padx=10)
     
     # Position Slider für jede Box
     box_sliders = {}
@@ -1979,7 +2096,7 @@ def open_settings_window(parent_root):
     
     # --- Klappen-Servo Steuerung ---
     gate_frame = tk.LabelFrame(
-        main_frame,
+        main_tab,
         text="Klappen-Steuerung",
         font=('Helvetica', 12, 'bold'),
         bg='#2b2b2b',
@@ -1987,7 +2104,7 @@ def open_settings_window(parent_root):
         relief='flat',
         bd=2
     )
-    gate_frame.pack(fill='x', pady=(0, 15))
+    gate_frame.pack(fill='x', pady=(0, 15), padx=10)
     
     gate_control_frame = tk.Frame(gate_frame, bg='#2b2b2b')
     gate_control_frame.pack(pady=15)
@@ -2028,7 +2145,7 @@ def open_settings_window(parent_root):
     
     # --- Rüttler Steuerung ---
     vibration_frame = tk.LabelFrame(
-        main_frame,
+        main_tab,
         text="Rüttler-Steuerung",
         font=('Helvetica', 12, 'bold'),
         bg='#2b2b2b',
@@ -2036,7 +2153,7 @@ def open_settings_window(parent_root):
         relief='flat',
         bd=2
     )
-    vibration_frame.pack(fill='x', pady=(0, 15))
+    vibration_frame.pack(fill='x', pady=(0, 15), padx=10)
     
     # Vibration Controller Referenz
     vibration = get_vibration_controller()
@@ -2108,6 +2225,270 @@ def open_settings_window(parent_root):
     )
     test_vibration_btn.pack()
     
+    # ==================== DEBUG / ERWEITERT TAB ====================
+    
+    # --- Teile-Erkennung (Motion Detection) ---
+    if automation_controller:
+        motion_frame = tk.LabelFrame(
+            debug_tab,
+            text="Teile-Erkennung (Schleuse)",
+            font=('Helvetica', 12, 'bold'),
+            bg='#2b2b2b',
+            fg='white',
+            relief='flat',
+            bd=2
+        )
+        motion_frame.pack(fill='x', pady=(10, 15), padx=10)
+        
+        # Info-Text
+        info_label = tk.Label(
+            motion_frame,
+            text="Empfindlichkeit der Bewegungserkennung in der Schleuse.\nNiedriger Wert = empfindlicher, höherer Wert = weniger empfindlich.",
+            font=('Helvetica', 9),
+            bg='#2b2b2b',
+            fg='#cccccc',
+            justify='left',
+            wraplength=550
+        )
+        info_label.pack(pady=(10, 5), padx=10)
+        
+        # Empfindlichkeit Slider
+        sensitivity_row_frame = tk.Frame(motion_frame, bg='#2b2b2b')
+        sensitivity_row_frame.pack(fill='x', padx=10, pady=10)
+        
+        sensitivity_label = tk.Label(
+            sensitivity_row_frame,
+            text="Schwellwert (Pixel):",
+            font=('Helvetica', 10),
+            bg='#2b2b2b',
+            fg='white',
+            width=20,
+            anchor='w'
+        )
+        sensitivity_label.pack(side='left')
+        
+        # Wert-Anzeige
+        sensitivity_value_label = tk.Label(
+            sensitivity_row_frame,
+            text=f"{automation_controller.motion_threshold}",
+            font=('Helvetica', 10, 'bold'),
+            bg='#2b2b2b',
+            fg='#00ff00',
+            width=6
+        )
+        sensitivity_value_label.pack(side='right', padx=(5, 0))
+        
+        # Empfindlichkeits-Slider (500-5000 Pixel)
+        sensitivity_slider = tk.Scale(
+            sensitivity_row_frame,
+            from_=500,
+            to=5000,
+            orient='horizontal',
+            bg='#2b2b2b',
+            fg='white',
+            highlightthickness=0,
+            troughcolor='#3a3a3a',
+            activebackground='#4a4a4a',
+            resolution=100,  # Schritte von 100
+            command=lambda val: update_motion_threshold(val, sensitivity_value_label, automation_controller)
+        )
+        sensitivity_slider.set(automation_controller.motion_threshold)
+        sensitivity_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+        
+        def update_motion_threshold(value, value_label, automation_ctrl):
+            """Update Motion Threshold"""
+            value_label.config(text=f"{value}")
+            automation_ctrl.motion_threshold = int(value)
+            print(f"Motion Threshold gesetzt auf: {value} Pixel")
+        
+        # Empfehlungen
+        recommendation_label = tk.Label(
+            motion_frame,
+            text="Empfohlen: 2000 (Standard) | Sehr empfindlich: 500-1000 | Wenig empfindlich: 3000-5000",
+            font=('Helvetica', 8, 'italic'),
+            bg='#2b2b2b',
+            fg='#888888',
+            justify='left'
+        )
+        recommendation_label.pack(pady=(0, 10), padx=10)
+    
+    # --- Kamera Preview Steuerung ---
+    if automation_controller:
+        camera_frame = tk.LabelFrame(
+            debug_tab,
+            text="Kamera Preview",
+            font=('Helvetica', 12, 'bold'),
+            bg='#2b2b2b',
+            fg='white',
+            relief='flat',
+            bd=2
+        )
+        camera_frame.pack(fill='x', pady=(0, 15), padx=10)
+        
+        # Info-Text
+        camera_info_label = tk.Label(
+            camera_frame,
+            text="Kamera-Vorschau aktivieren/deaktivieren.\nDeaktivierung kann Systemressourcen sparen.",
+            font=('Helvetica', 9),
+            bg='#2b2b2b',
+            fg='#cccccc',
+            justify='left',
+            wraplength=550
+        )
+        camera_info_label.pack(pady=(10, 5), padx=10)
+        
+        # Live-Vorschau-Bereich
+        preview_display_frame = tk.Frame(camera_frame, bg='#1a1a1a', relief='solid', bd=2)
+        preview_display_frame.pack(pady=(5, 10), padx=10)
+        
+        # Label für Kamera-Vorschau
+        preview_image_label = tk.Label(
+            preview_display_frame,
+            bg='#1a1a1a',
+            text="📷 Kamera-Vorschau\n(wird bei Aktivierung angezeigt)",
+            font=('Helvetica', 10),
+            fg='#888888',
+            width=60,
+            height=15
+        )
+        preview_image_label.pack(padx=5, pady=5)
+        
+        # Variable für Update-Job
+        preview_update_job = [None]  # Liste verwenden für Closure
+        
+        def update_preview_image():
+            """Aktualisiert das Kamera-Vorschaubild"""
+            try:
+                if automation_controller.preview_enabled and preview_update_job[0] is not None:
+                    # Temporäres Bild aufnehmen
+                    temp_preview_path = "/tmp/settings_preview.jpg"
+                    picam2.start()
+                    picam2.capture_file(temp_preview_path)
+                    picam2.stop()
+                    
+                    # Bild laden und skalieren
+                    img = Image.open(temp_preview_path)
+                    # Auf 400x300 skalieren für Anzeige
+                    img.thumbnail((400, 300), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    
+                    # Bild anzeigen
+                    preview_image_label.config(image=photo, text="")
+                    preview_image_label.image = photo  # Referenz behalten
+                    
+                    # Nächstes Update in 500ms
+                    preview_update_job[0] = settings_win.after(500, update_preview_image)
+            except Exception as e:
+                print(f"Fehler beim Aktualisieren der Vorschau: {e}")
+                # Bei Fehler trotzdem weiter versuchen
+                if preview_update_job[0] is not None:
+                    preview_update_job[0] = settings_win.after(1000, update_preview_image)
+        
+        # Status-Anzeige
+        preview_status_frame = tk.Frame(camera_frame, bg='#2b2b2b')
+        preview_status_frame.pack(pady=(5, 10))
+        
+        preview_status_label = tk.Label(
+            preview_status_frame,
+            text=f"Status: {'🟢 Aktiviert' if automation_controller.preview_enabled else '🔴 Deaktiviert'}",
+            font=('Helvetica', 10, 'bold'),
+            bg='#2b2b2b',
+            fg='#00ff00' if automation_controller.preview_enabled else '#ff4444',
+            justify='center'
+        )
+        preview_status_label.pack()
+        
+        # Buttons
+        preview_button_frame = tk.Frame(camera_frame, bg='#2b2b2b')
+        preview_button_frame.pack(pady=(0, 15))
+        
+        def toggle_preview(enable, status_label):
+            """Aktiviert oder deaktiviert die Kamera-Preview"""
+            try:
+                automation_controller.preview_enabled = enable
+                if enable:
+                    picam2.start_preview()
+                    status_label.config(
+                        text="Status: 🟢 Aktiviert",
+                        fg='#00ff00'
+                    )
+                    print("Kamera Preview aktiviert")
+                    # Starte Live-Vorschau-Updates
+                    if preview_update_job[0] is None:
+                        preview_update_job[0] = settings_win.after(100, update_preview_image)
+                else:
+                    # Stoppe Live-Vorschau-Updates
+                    if preview_update_job[0] is not None:
+                        settings_win.after_cancel(preview_update_job[0])
+                        preview_update_job[0] = None
+                    
+                    picam2.stop_preview()
+                    status_label.config(
+                        text="Status: 🔴 Deaktiviert",
+                        fg='#ff4444'
+                    )
+                    # Setze Platzhalter zurück
+                    preview_image_label.config(
+                        image='',
+                        text="📷 Kamera-Vorschau\n(wird bei Aktivierung angezeigt)",
+                        fg='#888888'
+                    )
+                    preview_image_label.image = None
+                    print("Kamera Preview deaktiviert")
+            except Exception as e:
+                print(f"Fehler beim Umschalten der Preview: {e}")
+                status_label.config(
+                    text=f"Status: ⚠️ Fehler",
+                    fg='#ffaa00'
+                )
+        
+        # Preview aktivieren Button
+        enable_preview_btn = tk.Button(
+            preview_button_frame,
+            text="🟢 Aktivieren",
+            font=('Helvetica', 11, 'bold'),
+            bg='#2d6a2e',
+            fg='white',
+            activebackground='#3d7a3e',
+            activeforeground='white',
+            relief='flat',
+            padx=20,
+            pady=10,
+            cursor='hand2',
+            command=lambda: toggle_preview(True, preview_status_label)
+        )
+        enable_preview_btn.pack(side='left', padx=5)
+        
+        # Preview deaktivieren Button
+        disable_preview_btn = tk.Button(
+            preview_button_frame,
+            text="🔴 Deaktivieren",
+            font=('Helvetica', 11, 'bold'),
+            bg='#8b2e2e',
+            fg='white',
+            activebackground='#9b3e3e',
+            activeforeground='white',
+            relief='flat',
+            padx=20,
+            pady=10,
+            cursor='hand2',
+            command=lambda: toggle_preview(False, preview_status_label)
+        )
+        disable_preview_btn.pack(side='left', padx=5)
+        
+        # Starte Preview-Updates wenn bereits aktiviert
+        if automation_controller.preview_enabled:
+            preview_update_job[0] = settings_win.after(100, update_preview_image)
+        
+        # Cleanup beim Schließen des Fensters
+        def on_closing():
+            if preview_update_job[0] is not None:
+                settings_win.after_cancel(preview_update_job[0])
+                preview_update_job[0] = None
+            settings_win.destroy()
+        
+        settings_win.protocol("WM_DELETE_WINDOW", on_closing)
+    
     # --- Buttons unten ---
     button_frame = tk.Frame(main_frame, bg='#1e1e1e')
     button_frame.pack(pady=(15, 0))
@@ -2156,7 +2537,7 @@ title_label = tk.Label(
 )
 title_label.pack(side='left', expand=True)
 
-# Settings-Button rechts oben
+# Settings-Button rechts oben (wird später mit automation verknüpft)
 settings_button = tk.Button(
     header_frame,
     text="⚙️",
@@ -2169,8 +2550,7 @@ settings_button = tk.Button(
     bd=0,
     padx=15,
     pady=5,
-    cursor='hand2',
-    command=lambda: open_settings_window(root)
+    cursor='hand2'
 )
 settings_button.pack(side='right')
 
@@ -2824,6 +3204,9 @@ class AutomationController:
         self.part_detected = False
         self.last_motion_time = 0
         
+        # Kamera Preview Einstellung
+        self.preview_enabled = True  # Standardmäßig aktiviert
+        
         # Sortier-Logik: Box-Zuordnung für Servo
         # Box 1-4: Sortier-Positionen (box1, box2, box3, box4 im ServoController)
         self.box_positions = ["box1", "box2", "box3", "box4"]  # Position-Namen für Servo
@@ -3363,14 +3746,20 @@ class AutomationController:
             case AutomationState.WARTEN_AUF_TEIL:
                 # Schieber bewegt sich kontinuierlich (Teile nachschieben)
                 # bis Motion Detection ein Teil erkennt
-                # RÜTTLER AKTIV in diesem State
+                # RÜTTLER AKTIV in diesem State mit Pattern (2s rütteln / 1s Pause)
                 if self.motion_detection_active:
                     # Starte Rüttler falls noch nicht gestartet
-                    if not self.vibration.is_running:
+                    if not self.vibration.pattern_active:
                         try:
                             self.vibration.start()
                         except Exception as e:
                             print(f"Rüttler Start Fehler: {e}")
+                    else:
+                        # Update Rüttel-Pattern
+                        try:
+                            self.vibration.update_pattern()
+                        except Exception as e:
+                            print(f"Rüttler Pattern Update Fehler: {e}")
                     
                     # Starte Stepper falls noch nicht gestartet
                     if not self.stepper.is_moving:
@@ -3378,6 +3767,12 @@ class AutomationController:
                             self.stepper.start_continuous_push()
                         except Exception as e:
                             print(f"Stepper Start Fehler: {e}")
+                    
+                    # Stepper Richtungs-Update (Auto-Reverse bei Sensoren)
+                    try:
+                        self.stepper.update_continuous_motion()
+                    except Exception as e:
+                        print(f"Stepper Motion Update Fehler: {e}")
                     
                     # Motion Detection: Erkenne Teileinwurf durch Bildänderung
                     if self._detect_motion():
@@ -3758,10 +4153,15 @@ clear_sets_button.config(command=automation.clear_sets)
 start_button.config(command=automation.start)
 pause_button.config(command=automation.toggle_pause)
 stop_button.config(command=automation.stop)
+settings_button.config(command=lambda: open_settings_window(root, automation))
 
 # Kamera vorbereiten
 try:
-    picam2.start_preview()
+    if automation.preview_enabled:
+        picam2.start_preview()
+        print("Kamera Preview gestartet")
+    else:
+        print("Kamera Preview deaktiviert (kann in Einstellungen aktiviert werden)")
 except Exception as e:
     print(f"Fehler beim Start der Kamera-Vorschau: {e}")
 
