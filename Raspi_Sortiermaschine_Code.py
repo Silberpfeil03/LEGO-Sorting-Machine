@@ -730,14 +730,21 @@ def get_stepper_controller():
 class VibrationController:
     """
     Dual Vibration Motor Controller für Teile-Förderung.
-    - Beide Rüttler: Einfache GPIO Outputs (An/Aus)
+    - Beide Rüttler: Software-PWM
     - Nur aktiv in WARTEN_AUF_TEIL State (wenn auf Teile gewartet wird)
+    - Duty Cycle einstellbar (50% Standard)
     """
     def __init__(self):
         self.vib1_pin = None
         self.vib2_pin = None
+        self.vib1_pwm = None  # Software-PWM Objekt
+        self.vib2_pwm = None  # Software-PWM Objekt
+        self.pwm_frequency = 100  # 100Hz für Vibrationsmotoren
         self.gpio_initialized = False
         self.is_running = False
+        
+        # Duty Cycle (0-100%) - einstellbar
+        self.duty_cycle = 50  # Standard: 50%
     
     def init_vibration(self):
         """Initialisiert beide Rüttler"""
@@ -750,18 +757,20 @@ class VibrationController:
             return False
         
         try:
-            # Rüttler 1: GPIO Output auf GPIO23
+            # Rüttler 1: Software-PWM auf GPIO23
             self.vib1_pin = VIBRATION_1_PIN["bcm"]
             GPIO.setup(self.vib1_pin, GPIO.OUT)
-            GPIO.output(self.vib1_pin, GPIO.LOW)  # Initial aus
+            self.vib1_pwm = GPIO.PWM(self.vib1_pin, self.pwm_frequency)
+            self.vib1_pwm.start(0)  # Start mit 0% Duty
             
-            # Rüttler 2: GPIO Output auf GPIO24
+            # Rüttler 2: Software-PWM auf GPIO24
             self.vib2_pin = VIBRATION_2_PIN["bcm"]
             GPIO.setup(self.vib2_pin, GPIO.OUT)
-            GPIO.output(self.vib2_pin, GPIO.LOW)  # Initial aus
+            self.vib2_pwm = GPIO.PWM(self.vib2_pin, self.pwm_frequency)
+            self.vib2_pwm.start(0)  # Start mit 0% Duty
             
             self.gpio_initialized = True
-            print(f"Rüttler initialisiert auf GPIO{self.vib1_pin} und GPIO{self.vib2_pin} (An/Aus)")
+            print(f"Rüttler initialisiert auf GPIO{self.vib1_pin} und GPIO{self.vib2_pin}")
             return True
         except Exception as e:
             print(f"Fehler bei Rüttler-Initialisierung: {e}")
@@ -769,7 +778,7 @@ class VibrationController:
             return False
     
     def start(self):
-        """Startet beide Rüttler (HIGH)"""
+        """Startet beide Rüttler mit aktuellem Duty Cycle"""
         if not self.gpio_initialized:
             print("Rüttler nicht initialisiert - kann nicht starten")
             return
@@ -778,15 +787,15 @@ class VibrationController:
             return  # Bereits aktiv
         
         try:
-            GPIO.output(self.vib1_pin, GPIO.HIGH)
-            GPIO.output(self.vib2_pin, GPIO.HIGH)
+            self.vib1_pwm.ChangeDutyCycle(self.duty_cycle)
+            self.vib2_pwm.ChangeDutyCycle(self.duty_cycle)
             self.is_running = True
-            print("Rüttler gestartet (AN)")
+            print(f"Rüttler gestartet mit {self.duty_cycle}% Duty Cycle")
         except Exception as e:
             print(f"Fehler beim Starten der Rüttler: {e}")
     
     def stop(self):
-        """Stoppt beide Rüttler (LOW)"""
+        """Stoppt beide Rüttler"""
         if not self.gpio_initialized:
             return
         
@@ -794,12 +803,24 @@ class VibrationController:
             return  # Bereits gestoppt
         
         try:
-            GPIO.output(self.vib1_pin, GPIO.LOW)
-            GPIO.output(self.vib2_pin, GPIO.LOW)
+            self.vib1_pwm.ChangeDutyCycle(0)
+            self.vib2_pwm.ChangeDutyCycle(0)
             self.is_running = False
-            print("Rüttler gestoppt (AUS)")
+            print("Rüttler gestoppt")
         except Exception as e:
             print(f"Fehler beim Stoppen der Rüttler: {e}")
+    
+    def set_duty_cycle(self, duty):
+        """Setzt Duty Cycle (0-100%) - wird sofort angewendet wenn aktiv"""
+        self.duty_cycle = max(0, min(100, duty))  # Clamp auf 0-100
+        
+        if self.is_running and self.gpio_initialized:
+            try:
+                self.vib1_pwm.ChangeDutyCycle(self.duty_cycle)
+                self.vib2_pwm.ChangeDutyCycle(self.duty_cycle)
+                print(f"Rüttler Duty Cycle auf {self.duty_cycle}% gesetzt")
+            except Exception as e:
+                print(f"Fehler beim Setzen des Duty Cycles: {e}")
     
     def test(self, duration=2.0):
         """Testet Rüttler für eine bestimmte Zeit (Sekunden)"""
@@ -807,7 +828,7 @@ class VibrationController:
             print("Rüttler nicht initialisiert - Test nicht möglich")
             return
         
-        print(f"Teste Rüttler für {duration}s...")
+        print(f"Teste Rüttler für {duration}s mit {self.duty_cycle}% Duty Cycle...")
         was_running = self.is_running
         
         if not was_running:
@@ -825,6 +846,11 @@ class VibrationController:
         self.stop()
         if self.gpio_initialized:
             try:
+                if self.vib1_pwm:
+                    self.vib1_pwm.stop()
+                if self.vib2_pwm:
+                    self.vib2_pwm.stop()
+                
                 GPIO.cleanup([self.vib1_pin, self.vib2_pin])
                 print("Rüttler GPIO bereinigt")
             except:
@@ -2015,9 +2041,56 @@ def open_settings_window(parent_root):
     # Vibration Controller Referenz
     vibration = get_vibration_controller()
     
+    # Duty Cycle Slider
+    duty_row_frame = tk.Frame(vibration_frame, bg='#2b2b2b')
+    duty_row_frame.pack(fill='x', padx=10, pady=10)
+    
+    duty_label = tk.Label(
+        duty_row_frame,
+        text="Intensität (Duty Cycle):",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    duty_label.pack(side='left')
+    
+    # Wert-Anzeige
+    duty_value_label = tk.Label(
+        duty_row_frame,
+        text=f"{vibration.duty_cycle}%",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#00ff00',
+        width=6
+    )
+    duty_value_label.pack(side='right', padx=(5, 0))
+    
+    # Duty Cycle Slider
+    duty_slider = tk.Scale(
+        duty_row_frame,
+        from_=0,
+        to=100,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a3a',
+        activebackground='#4a4a4a',
+        command=lambda val: update_duty_cycle(val, duty_value_label, vibration)
+    )
+    duty_slider.set(vibration.duty_cycle)
+    duty_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+    
+    def update_duty_cycle(value, value_label, vib_ctrl):
+        """Update Duty Cycle"""
+        value_label.config(text=f"{value}%")
+        vib_ctrl.set_duty_cycle(int(value))
+    
     # Test Button
     test_row_frame = tk.Frame(vibration_frame, bg='#2b2b2b')
-    test_row_frame.pack(pady=15)
+    test_row_frame.pack(pady=(0, 15))
     
     test_vibration_btn = tk.Button(
         test_row_frame,
