@@ -1319,54 +1319,108 @@ def extract_bounding_box_region(bbox_data, image_width, image_height):
     Konvertiert verschiedene Bounding-Box-Formate in (x, y, width, height).
     
     Unterstützte Formate:
+    - Brickognize API: {"left": px, "upper": px, "right": px, "lower": px, "image_width": px, "image_height": px}
     - dict mit (x, y, width, height): {"x": 100, "y": 50, "width": 200, "height": 150}
-    - dict mit (left, upper, right, lower): {"left": 0.1, "upper": 0.2, "right": 0.8, "lower": 0.9}
-    - list/tuple [x, y, width, height]
-    - list/tuple [left, upper, right, lower] (mit image dimensions)
+    - dict mit (x1, y1, x2, y2): {"x1": 100, "y1": 50, "x2": 300, "y2": 200}
+    - dict mit (xmin, ymin, xmax, ymax): {"xmin": 100, "ymin": 50, "xmax": 300, "ymax": 200}
+    - list/tuple [x, y, width, height] oder [x1, y1, x2, y2]
     
-    :return: Tuple (x, y, width, height) oder None
+    :param bbox_data: Bounding Box Daten von der API
+    :param image_width: Tatsächliche Breite des Originalbildes
+    :param image_height: Tatsächliche Höhe des Originalbildes
+    :return: Tuple (x, y, width, height) skaliert auf Originalbild, oder None
     """
-    if not bbox_data or not isinstance(bbox_data, (dict, list, tuple)):
+    if not bbox_data:
         return None
+    
+    print(f"[BBox Debug] Rohdaten: {bbox_data} (Typ: {type(bbox_data).__name__})")
+    print(f"[BBox Debug] Originalbild-Größe: {image_width}x{image_height}")
     
     try:
         if isinstance(bbox_data, dict):
-            # Format 1: x, y, width, height
-            if all(k in bbox_data for k in ["x", "y", "width", "height"]):
-                return (
+            # Format 1: Brickognize API - left, upper, right, lower (ABSOLUTE Pixelwerte)
+            # WICHTIG: Die API liefert image_width/image_height mit - das sind die Dimensionen
+            # auf die sich die Koordinaten beziehen (die API skaliert intern!)
+            if all(k in bbox_data for k in ["left", "upper", "right", "lower"]):
+                left = float(bbox_data["left"])
+                upper = float(bbox_data["upper"])
+                right = float(bbox_data["right"])
+                lower = float(bbox_data["lower"])
+                
+                # Prüfe ob API eigene Bild-Dimensionen mitliefert (Brickognize tut das!)
+                api_img_width = float(bbox_data.get("image_width", image_width))
+                api_img_height = float(bbox_data.get("image_height", image_height))
+                
+                print(f"[BBox Debug] API-Bild-Größe: {api_img_width}x{api_img_height}")
+                
+                # Skalierungsfaktoren berechnen
+                scale_x = image_width / api_img_width if api_img_width > 0 else 1.0
+                scale_y = image_height / api_img_height if api_img_height > 0 else 1.0
+                
+                print(f"[BBox Debug] Skalierungsfaktoren: x={scale_x:.3f}, y={scale_y:.3f}")
+                
+                # Koordinaten auf Originalbild skalieren
+                x = int(left * scale_x)
+                y = int(upper * scale_y)
+                width = int((right - left) * scale_x)
+                height = int((lower - upper) * scale_y)
+                
+                print(f"[BBox Debug] Format: Brickognize (skaliert)")
+                print(f"[BBox Debug] API-Coords: left={left}, upper={upper}, right={right}, lower={lower}")
+                print(f"[BBox Debug] → Skaliert: x={x}, y={y}, w={width}, h={height}")
+                
+                # Validierung
+                if width > 0 and height > 0 and x >= 0 and y >= 0:
+                    return (x, y, width, height)
+                else:
+                    print(f"[BBox Debug] ⚠️ Ungültige Dimensionen!")
+                    return None
+            
+            # Format 2: x, y, width, height
+            elif all(k in bbox_data for k in ["x", "y", "width", "height"]):
+                result = (
                     int(bbox_data["x"]),
                     int(bbox_data["y"]),
                     int(bbox_data["width"]),
                     int(bbox_data["height"])
                 )
-            # Format 2: left, upper, right, lower (normalisiert oder absolut)
-            elif all(k in bbox_data for k in ["left", "upper", "right", "lower"]):
-                left = bbox_data["left"]
-                upper = bbox_data["upper"]
-                right = bbox_data["right"]
-                lower = bbox_data["lower"]
-                
-                # Prüfe ob normalisiert (0.0-1.0) oder absolut
-                if left <= 1.0 and upper <= 1.0 and right <= 1.0 and lower <= 1.0:
-                    # Normalisiert
-                    x = int(left * image_width)
-                    y = int(upper * image_height)
-                    width = int((right - left) * image_width)
-                    height = int((lower - upper) * image_height)
-                else:
-                    # Absolut
-                    x = int(left)
-                    y = int(upper)
-                    width = int(right - left)
-                    height = int(lower - upper)
-                return (x, y, width, height) if width > 0 and height > 0 else None
+                print(f"[BBox Debug] Format: x,y,w,h → {result}")
+                return result
+            
+            # Format 3: x1, y1, x2, y2
+            elif all(k in bbox_data for k in ["x1", "y1", "x2", "y2"]):
+                x1, y1 = int(bbox_data["x1"]), int(bbox_data["y1"])
+                x2, y2 = int(bbox_data["x2"]), int(bbox_data["y2"])
+                result = (x1, y1, x2 - x1, y2 - y1)
+                print(f"[BBox Debug] Format: x1,y1,x2,y2 → {result}")
+                return result if result[2] > 0 and result[3] > 0 else None
+            
+            # Format 4: xmin, ymin, xmax, ymax
+            elif all(k in bbox_data for k in ["xmin", "ymin", "xmax", "ymax"]):
+                xmin, ymin = int(bbox_data["xmin"]), int(bbox_data["ymin"])
+                xmax, ymax = int(bbox_data["xmax"]), int(bbox_data["ymax"])
+                result = (xmin, ymin, xmax - xmin, ymax - ymin)
+                print(f"[BBox Debug] Format: xmin,ymin,xmax,ymax → {result}")
+                return result if result[2] > 0 and result[3] > 0 else None
         
         elif isinstance(bbox_data, (list, tuple)) and len(bbox_data) == 4:
-            return tuple(int(v) for v in bbox_data)
+            vals = [float(v) for v in bbox_data]
+            
+            # Heuristik: Wenn vals[2] > vals[0] und vals[3] > vals[1], dann ist es [x1,y1,x2,y2]
+            if vals[2] > vals[0] and vals[3] > vals[1] and vals[2] > 10 and vals[3] > 10:
+                # [x1, y1, x2, y2] Format
+                result = (int(vals[0]), int(vals[1]), int(vals[2] - vals[0]), int(vals[3] - vals[1]))
+                print(f"[BBox Debug] Format: list [x1,y1,x2,y2] → {result}")
+            else:
+                # [x, y, w, h] Format
+                result = tuple(int(v) for v in vals)
+                print(f"[BBox Debug] Format: list [x,y,w,h] → {result}")
+            return result if result[2] > 0 and result[3] > 0 else None
     
-    except (ValueError, TypeError):
-        pass
+    except (ValueError, TypeError) as e:
+        print(f"[BBox Debug] Fehler beim Parsen: {e}")
     
+    print(f"[BBox Debug] Konnte Format nicht erkennen")
     return None
 
 
@@ -1570,7 +1624,15 @@ def capture_and_identify():
             except:
                 img_width, img_height = 640, 480
             
-            if "items" in api_response and api_response["items"]:
+            # ZUERST: Top-Level Bounding-Box prüfen (Brickognize API Standard)
+            if "bounding_box" in api_response and api_response["bounding_box"]:
+                top_bbox = api_response["bounding_box"]
+                region = extract_bounding_box_region(top_bbox, img_width, img_height)
+                if region:
+                    print(f"✓ Top-Level Bounding-Box: {region}")
+            
+            # Fallback: In Items suchen (für andere APIs)
+            if region is None and "items" in api_response and api_response["items"]:
                 best_item = max(api_response["items"], key=lambda x: x.get("score", 0))
                 
                 # Suche nach verschiedenen möglichen Bounding Box-Schlüsseln
@@ -1580,14 +1642,6 @@ def capture_and_identify():
                         if region:
                             print(f"✓ Bounding-Box gefunden aus best_item['{key}']: {region}")
                         break
-            
-            # Fallback: Top-Level Bounding-Box
-            if region is None and "bounding_box" in api_response:
-                top_bbox = api_response["bounding_box"]
-                if top_bbox.get("score", 0) > 0:
-                    region = extract_bounding_box_region(top_bbox, img_width, img_height)
-                    if region:
-                        print(f"✓ Top-Level Bounding-Box: {region}")
         
         # Wenn keine Bounding Box gefunden, verwende die zentrale Region
         if region is None:
@@ -2451,37 +2505,159 @@ def open_settings_window(parent_root, automation_controller=None):
         )
         camera_test_image_label.pack(fill='both', expand=True, padx=5, pady=5)
         
+        # Ergebnis-Label für API-Erkennung und Farbe
+        camera_test_result_label = tk.Label(
+            camera_test_frame,
+            text="[Warte auf Testbild...]",
+            font=('Consolas', 9),
+            bg='#2b2b2b',
+            fg='#cccccc',
+            justify='left',
+            anchor='w',
+            wraplength=600
+        )
+        camera_test_result_label.pack(pady=(0, 10), padx=10, fill='x')
+        
         def test_camera_capture():
-            """Nimmt ein Testbild auf und zeigt es an"""
+            """Nimmt ein Testbild auf, sendet an API und führt Farberkennung durch"""
+            from PIL import ImageDraw
             try:
                 camera_test_image_label.config(text="📷 Aufnahme läuft...", fg='#ffaa00', image="")
                 camera_test_image_label.image = None
+                camera_test_result_label.config(text="🔍 Verarbeitung läuft...", fg='#ffaa00')
                 camera_test_frame.update()
                 
                 # Bild aufnehmen (nutzt die bestehende capture_image Funktion)
-                temp_test_path = "/tmp/camera_test.jpg"
+                # Verwendet denselben Pfad wie im Standardbetrieb für identische Qualität
+                temp_test_path = IMAGE_PATH  # /tmp/brick_image.jpg
                 if capture_image(temp_test_path):
-                    # Bild laden und auf Vorschaugröße skalieren
-                    test_img = Image.open(temp_test_path)
-                    # Berechne Skalierung für max 500x280 Pixel (mit Padding)
-                    test_img.thumbnail((490, 290), Image.Resampling.LANCZOS)
+                    # Bild laden (Original behalten für Bounding Box)
+                    test_img_orig = Image.open(temp_test_path)
+                    orig_width, orig_height = test_img_orig.size
                     
-                    # In PhotoImage konvertieren
-                    test_photo = ImageTk.PhotoImage(test_img)
+                    print("✅ Testbild erfolgreich aufgenommen")
                     
-                    # Anzeigen
+                    # ===== API ERKENNUNG =====
+                    camera_test_result_label.config(text="🔍 Sende an API...", fg='#ffaa00')
+                    camera_test_frame.update()
+                    
+                    brick_id, brick_name, img_url, num_detected, api_response, bbox_info = identify_brick(temp_test_path)
+                    
+                    # ===== BOUNDING BOX EXTRAHIEREN =====
+                    bbox_coords = None
+                    bbox_source = "Keine"
+                    region = None
+                    raw_bbox_data = None  # Für Debug-Ausgabe
+                    
+                    # Versuche Bounding Box aus API-Antwort zu extrahieren
+                    # Brickognize API: bounding_box ist auf Top-Level, nicht in items!
+                    if api_response:
+                        # ZUERST: Top-Level bounding_box prüfen (das ist der Standard bei Brickognize)
+                        if "bounding_box" in api_response and api_response["bounding_box"]:
+                            top_bbox = api_response["bounding_box"]
+                            print(f"[BBox Debug] Top-Level bounding_box: {top_bbox}")
+                            raw_bbox_data = top_bbox
+                            region = extract_bounding_box_region(top_bbox, orig_width, orig_height)
+                            if region:
+                                bbox_coords = region
+                                bbox_source = "Top-Level"
+                        
+                        # Fallback: In Items suchen (für andere APIs)
+                        if bbox_coords is None and "items" in api_response and api_response["items"]:
+                            best_item = max(api_response["items"], key=lambda x: x.get("score", 0))
+                            print(f"[BBox Debug] Best Item Keys: {list(best_item.keys())}")
+                            
+                            for key in ["bbox", "bounding_box", "cage", "region", "box"]:
+                                if key in best_item and best_item[key]:
+                                    raw_bbox_data = best_item[key]
+                                    print(f"[BBox Debug] Gefunden in Item: {key} = {raw_bbox_data}")
+                                    region = extract_bounding_box_region(raw_bbox_data, orig_width, orig_height)
+                                    if region:
+                                        bbox_coords = region
+                                        bbox_source = f"Item ({key})"
+                                        break
+                    
+                    # Fallback: Zentrale Region
+                    if bbox_coords is None:
+                        region = get_center_region_from_image(temp_test_path)
+                        if region:
+                            bbox_coords = region
+                            bbox_source = "Zentral (Fallback)"
+                            print(f"[BBox Debug] Fallback auf zentrale Region: {region}")
+                    
+                    # ===== BOUNDING BOX AUF BILD ZEICHNEN =====
+                    test_img_draw = test_img_orig.copy()
+                    if bbox_coords:
+                        draw = ImageDraw.Draw(test_img_draw)
+                        x, y, w, h = bbox_coords
+                        # Rechteck zeichnen (grün, 3px dick)
+                        for i in range(3):
+                            draw.rectangle(
+                                [x - i, y - i, x + w + i, y + h + i],
+                                outline=(0, 255, 0)
+                            )
+                        # Beschriftung
+                        try:
+                            draw.text((x + 5, y + 5), f"BBox", fill=(0, 255, 0))
+                        except:
+                            pass
+                    
+                    # Auf Vorschaugröße skalieren
+                    test_img_draw.thumbnail((490, 290), Image.Resampling.LANCZOS)
+                    
+                    # In PhotoImage konvertieren und anzeigen
+                    test_photo = ImageTk.PhotoImage(test_img_draw)
                     camera_test_image_label.config(image=test_photo, text="", fg='#00ff00')
                     camera_test_image_label.image = test_photo
+                    camera_test_frame.update()
                     
-                    print("✅ Testbild erfolgreich aufgenommen und angezeigt")
+                    # ===== FARBERKENNUNG =====
+                    color_info = None
+                    if region:
+                        color_info = get_dominant_color_simple(temp_test_path, region)
+                    
+                    # ===== ERGEBNISSE ANZEIGEN =====
+                    result_lines = []
+                    result_color = "#00ff00"
+                    
+                    if brick_id:
+                        result_lines.append(f"🆔 Teil-ID: {brick_id}")
+                        result_lines.append(f"📦 Name: {brick_name}")
+                        result_lines.append(f"🔍 Erkannte Teile: {num_detected}")
+                    else:
+                        result_lines.append("⚠️ Kein Teil erkannt")
+                        result_color = "#ffaa00"
+                    
+                    if color_info:
+                        detected_color = color_info.get("color", "Unbekannt")
+                        detected_rgb = color_info.get("rgb", (0, 0, 0))
+                        confidence = color_info.get("color_confidence", 0)
+                        result_lines.append(f"🎨 Farbe: {detected_color}")
+                        result_lines.append(f"📊 RGB: {detected_rgb} | Konfidenz: {confidence:.1%}")
+                    
+                    # Bounding Box Info hinzufügen
+                    if bbox_coords:
+                        x, y, w, h = bbox_coords
+                        result_lines.append(f"📐 BBox: x={x}, y={y}, w={w}, h={h} ({bbox_source})")
+                        # Rohdaten für Debugging anzeigen
+                        if raw_bbox_data:
+                            result_lines.append(f"📋 Raw: {raw_bbox_data}")
+                    else:
+                        result_lines.append(f"📐 BBox: Keine gefunden")
+                    
+                    camera_test_result_label.config(text="\n".join(result_lines), fg=result_color)
+                    print(f"✅ Erkennung abgeschlossen:\n" + "\n".join(result_lines))
+                    
                 else:
                     camera_test_image_label.config(text="❌ Fehler: Aufnahme fehlgeschlagen", fg='#ff4444', image="")
                     camera_test_image_label.image = None
+                    camera_test_result_label.config(text="❌ Bildaufnahme fehlgeschlagen", fg='#ff4444')
                     print("❌ Testbild-Aufnahme fehlgeschlagen")
                     
             except Exception as e:
                 camera_test_image_label.config(text=f"❌ Fehler: {str(e)}", fg='#ff4444', image="")
                 camera_test_image_label.image = None
+                camera_test_result_label.config(text=f"❌ Fehler: {str(e)}", fg='#ff4444')
                 print(f"❌ Fehler beim Test-Kameraaufnahme: {e}")
         
         # Test Button
@@ -4397,29 +4573,24 @@ class AutomationController:
                     print("BOUNDING-BOX ANALYSE:")
                     print("="*60)
                     
-                    # Strategie 1: Bounding-Box aus Best-Item auslesen
-                    if "items" in api_response and api_response["items"]:
+                    # Strategie 1: Top-Level Bounding-Box (Brickognize API Standard)
+                    if "bounding_box" in api_response and api_response["bounding_box"]:
+                        top_bbox = api_response["bounding_box"]
+                        region = extract_bounding_box_region(top_bbox, img_width, img_height)
+                        if region:
+                            print(f"✓ STRATEGIE 1 - Top-Level Bounding-Box: {region}")
+                            print(f"  Score: {top_bbox.get('score', 0):.3f}")
+                    
+                    # Strategie 2: Bounding-Box aus Best-Item auslesen (für andere APIs)
+                    if region is None and "items" in api_response and api_response["items"]:
                         best_item = max(api_response["items"], key=lambda x: x.get("score", 0))
                         for key in ["bbox", "bounding_box", "cage", "region", "box"]:
                             if key in best_item:
                                 region = extract_bounding_box_region(best_item[key], img_width, img_height)
                                 if region:
-                                    print(f"✓ STRATEGIE 1 - Bounding-Box aus best_item['{key}']: {region}")
+                                    print(f"✓ STRATEGIE 2 - Bounding-Box aus best_item['{key}']: {region}")
                                     print(f"  Item ID: {best_item.get('id')}, Score: {best_item.get('score'):.3f}")
                                     break
-                    
-                    # Strategie 2: Top-Level Bounding-Box als Fallback
-                    if region is None and "bounding_box" in api_response:
-                        top_bbox = api_response["bounding_box"]
-                        top_score = top_bbox.get("score", 0)
-                        # Prüfe ob Top-Level BBox gültig ist (Score > 0)
-                        if top_score > 0:
-                            region = extract_bounding_box_region(top_bbox, img_width, img_height)
-                            if region:
-                                print(f"✓ STRATEGIE 2 - Top-Level Bounding-Box: {region}")
-                                print(f"  Top-Level Score: {top_score:.3f}, Format: absolute")
-                        else:
-                            print(f"ℹ Top-Level Box vorhanden aber Score=0 (ignoriert)")
                     
                     # Strategie 3: Zentrale Region als letzter Fallback
                     if region is None:
