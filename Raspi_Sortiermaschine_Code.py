@@ -151,11 +151,19 @@ VIBRATION_2_PIN = {
     "description": "Rüttler 2 - Software-PWM"
 }
 
+VIBRATION_KILL_PIN = {
+    "wiring": 8,   # WiringPi 8
+    "bcm": 14,     # BCM GPIO14
+    "physical": 8,
+    "function": "GPIO_OUTPUT",
+    "description": "Soforthalt für unteren Rüttler - Schnelles Stoppen bei Teilerkennung"
+}
+
 # INFO: 
 # - SERVO_SORT verwendet Hardware-PWM1 (präzise für 270° Servo)
 # - SERVO_GATE verwendet Software-PWM (ausreichend für Klappen-Servo)
 # - VIBRATION verwendet Software-PWM (aktiv nur in WARTEN_AUF_TEIL)
-# - Kein Pin-Konflikt mehr!
+# - VIBRATION_KILL_PIN: Notfall-Stop für unteren Rüttler (High = aktiviert)
 
 # --- Stepper Motor Controller ---
 class StepperController:
@@ -629,6 +637,7 @@ class VibrationController:
     def __init__(self):
         self.vib1_pin = None
         self.vib2_pin = None
+        self.kill_pin = None  # Kill-Pin für Soforthalt
         self.vib1_pwm = None  # Software-PWM Objekt
         self.vib2_pwm = None  # Software-PWM Objekt
         self.pwm_frequency = 100  # 100Hz für Vibrationsmotoren
@@ -646,7 +655,7 @@ class VibrationController:
         self.pause_duration = 1.0    # 1 Sekunde Pause
     
     def init_vibration(self):
-        """Initialisiert beide Rüttler"""
+        """Initialisiert beide Rüttler und Kill-Pin"""
         if self.gpio_initialized:
             return True
         
@@ -668,8 +677,13 @@ class VibrationController:
             self.vib2_pwm = GPIO.PWM(self.vib2_pin, self.pwm_frequency)
             self.vib2_pwm.start(0)  # Start mit 0% Duty
             
+            # Kill-Pin: GPIO-Output auf GPIO14 (Soforthalt)
+            self.kill_pin = VIBRATION_KILL_PIN["bcm"]
+            GPIO.setup(self.kill_pin, GPIO.OUT)
+            GPIO.output(self.kill_pin, GPIO.LOW)  # Start mit LOW (inaktiv)
+            
             self.gpio_initialized = True
-            print(f"Rüttler initialisiert auf GPIO{self.vib1_pin} und GPIO{self.vib2_pin}")
+            print(f"Rüttler initialisiert: Rüttler 1=GPIO{self.vib1_pin}, Rüttler 2=GPIO{self.vib2_pin}, Kill-Pin=GPIO{self.kill_pin}")
             return True
         except Exception as e:
             print(f"Fehler bei Rüttler-Initialisierung: {e}")
@@ -779,6 +793,29 @@ class VibrationController:
             self.stop()
         
         print("Rüttler-Test abgeschlossen")
+    
+    def emergency_stop(self):
+        """
+        Soforthalt - Aktiviert Kill-Pin für schnelles Stoppen des unteren Rüttlers
+        (wird verwendet wenn ein Teil in der Schleuse erkannt wurde)
+        """
+        if not self.gpio_initialized:
+            print("Rüttler nicht initialisiert - Kill nicht möglich")
+            return
+        
+        try:
+            # Aktiviere Kill-Pin (HIGH) um unteren Rüttler zu unterbrechen
+            GPIO.output(self.kill_pin, GPIO.HIGH)
+            print("🛑 Rüttler Kill aktiviert - Unteren Rüttler gestoppt!")
+            
+            # Halte Signal kurz (50ms)
+            time.sleep(0.05)
+            
+            # Deaktiviere Kill-Pin wieder (LOW)
+            GPIO.output(self.kill_pin, GPIO.LOW)
+            
+        except Exception as e:
+            print(f"Fehler beim Rüttler Kill: {e}")
     
     def cleanup(self):
         """GPIO Cleanup"""
@@ -3361,6 +3398,7 @@ class AutomationController:
         self.set_to_box: dict[str, int] = {}  # Mapping: set_number -> box_index (0-3)
         self.reject_box = 3  # Box 4 (Index 3) für Ausschuss
         self.current_part_box = self.reject_box  # Aktuell zu sortierende Box
+        self.last_sorted_box = None  # Zuletzt sortierte Box (für Optimierung)
         self.current_detected_part_id = None  # Zuletzt erkannte Teil-ID
         
         # LED-System initialisieren
@@ -3929,15 +3967,23 @@ class AutomationController:
                         print("Teil-Einwurf erkannt - Stoppe Schieber und Rüttler")
                         
                         try:
-                            self.stepper.stop()
-                        except Exception as e:
-                            print(f"Stepper Stop Fehler: {e}")
-                        
-                        try:
                             self.vibration.stop()
                         except Exception as e:
                             print(f"Rüttler Stop Fehler: {e}")
                         
+                        # 🛑 SOFORTHALT: Kill-Pin aktivieren für schnelles Stoppen des unteren Rüttlers
+                        try:
+                            self.vibration.emergency_stop()
+                            print("🛑 Rüttler Kill Signal gesendet!")
+                        except Exception as e:
+                            print(f"Rüttler Kill Fehler: {e}")
+                        
+                        try:
+                            self.stepper.stop()
+                        except Exception as e:
+                            print(f"Stepper Stop Fehler: {e}")
+                        
+
                         # Warte bis Teil ruhig liegt
                         self._wait_for_part_settled()
                         
@@ -4071,7 +4117,16 @@ class AutomationController:
                     print(f"Sortier-Servo auf {target_position}")
                 except Exception as e:
                     print(f"Sortier-Servo Fehler: {e}")
-                time.sleep(1.2)  # Warte bis Schleuse gestellt ist
+
+                # ⚡ Optimierte Wartezeit basierend auf letzter Box
+                # Wenn gleiche Box wie vorher: 0 Sek (Servo steht bereits richtig)
+                # Wenn andere Box: 1.2 Sek (Servo muss neu fahren)
+                if self.last_sorted_box == self.current_part_box:
+                    servo_wait_time = 0.0  # Keine Wartezeit, Servo steht schon richtig
+                else:
+                    servo_wait_time = 1.2  # Normale Wartezeit für Servo-Bewegung  
+                time.sleep(servo_wait_time)  # Warte bis Schleuse gestellt ist
+            
                 # Klappe öffnen
                 try:
                     self.servo.open_gate()
@@ -4089,7 +4144,11 @@ class AutomationController:
                 except Exception as e:
                     print(f"Klappen-Servo Fehler: {e}")
                 
-                time.sleep(0.2)  # Kurze Pause nach Sortierung
+                time.sleep(0.1)  # Kurze Pause nach Sortierung
+                
+                # 📌 Speichere diese Box als letzte sortierte Box
+                self.last_sorted_box = self.current_part_box
+                print(f"✓ Box {self.current_part_box + 1} als letzte Sortierung gespeichert")
                 
                 # LED zurück auf 30% für Motion Detection
                 self._set_led_brightness(30)
