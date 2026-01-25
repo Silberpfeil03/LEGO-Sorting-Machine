@@ -3308,7 +3308,11 @@ def compare_with_bricklink_by_id_and_color(detected_part_id, detected_color_info
             rgb_distance = float('inf')
             rgb_match_percentage = 0.0
             
-            if lego_standard_rgb and detected_rgb:
+            # SPEZIAL: Teile OHNE Farbinformation -> 100% Match (immer akzeptiert)
+            if not part_color_name or not lego_color_name:
+                rgb_distance = 0.0
+                rgb_match_percentage = 100.0  # Kein Match nötig, Teil wird akzeptiert
+            elif lego_standard_rgb and detected_rgb:
                 rgb_distance = calculate_rgb_distance(detected_rgb, lego_standard_rgb)
                 # Normalisiere Abstand zu Prozent (0-100%, wobei 100% = perfekt)
                 max_distance = 441.67  # Maximaler RGB-Abstand (sqrt(255²+255²+255²))
@@ -3324,7 +3328,8 @@ def compare_with_bricklink_by_id_and_color(detected_part_id, detected_color_info
                 'rgb_distance': rgb_distance,
                 'rgb_match_percentage': rgb_match_percentage,
                 'quantity': part.get('qty', '0'),
-                'match_type': 'ID-Match'
+                'match_type': 'ID-Match',
+                'has_color_info': bool(part_color_name)  # Flag ob Farbinfo vorhanden
             })
         else:
             # Sammle andere Teile für Fallback
@@ -4267,35 +4272,53 @@ class AutomationController:
                             comparison_result = compare_with_bricklink_by_id_and_color(current_part_id, color_info, current_set_parts)
                             if comparison_result and comparison_result['match_status'] == 'ID_FOUND':
                                 match = comparison_result['primary_match']
-                                # Finde heraus, zu welchem Set dieses Teil gehört
-                                part_key = (current_part_id, match.get('bricklink_color', ''))
+                                rgb_match_percentage = match.get('rgb_match_percentage', 0)
+                                has_color_info = match.get('has_color_info', True)
                                 
-                                for set_num in self.set_numbers:
-                                    if set_num in self.parts_per_set:
-                                        # Prüfe ob Teil in diesem Set ist
-                                        for part in self.parts_per_set[set_num]:
-                                            if (part.get('id'), part.get('color_name')) == part_key:
-                                                # Teil gehört zu diesem Set
-                                                self.found_parts_per_set[set_num][part_key] = self.found_parts_per_set[set_num].get(part_key, 0) + 1
-                                                print(f"Teil erkannt: {current_part_id}")
-                                                break
-                                
-                                # Aktualisiere Set-Info-Anzeige mit neuem Fortschritt
-                                self._update_set_info_display()
-                                # Aktualisiere Fortschritts-Visualisierung
-                                self._update_progress_visualization()
-                                
-                                # Bestimme Ziel-Box für Sortierung
-                                part_color_name = match.get('bricklink_color', '')
-                                self.current_part_box = self._determine_target_box(current_part_id, part_color_name)
-                                self.current_detected_part_id = current_part_id
-                                
-                                box_num = self.current_part_box + 1
-                                if self.current_part_box == self.reject_box:
-                                    print(f"Teil {current_part_id} -> Ausschuss (Box {box_num})")
+                                # ===== RGB-MATCH SCHWELLE: Mindestens 50% erforderlich =====
+                                # AUSNAHME: Teile OHNE Farbinformation umgehen die Schwelle
+                                if rgb_match_percentage >= 50 or not has_color_info:
+                                    # RGB-Match akzeptabel ODER Teil hat keine Farbinfo (akzeptiert)
+                                    if not has_color_info:
+                                        print(f"Teil erkannt: {current_part_id} (keine Farbinformation - akzeptiert)")
+                                    else:
+                                        print(f"Teil erkannt: {current_part_id} (RGB-Match: {rgb_match_percentage:.1f}%)")
+                                    
+                                    # Finde heraus, zu welchem Set dieses Teil gehört
+                                    part_key = (current_part_id, match.get('bricklink_color', ''))
+                                    
+                                    for set_num in self.set_numbers:
+                                        if set_num in self.parts_per_set:
+                                            # Prüfe ob Teil in diesem Set ist
+                                            for part in self.parts_per_set[set_num]:
+                                                if (part.get('id'), part.get('color_name')) == part_key:
+                                                    # Teil gehört zu diesem Set
+                                                    self.found_parts_per_set[set_num][part_key] = self.found_parts_per_set[set_num].get(part_key, 0) + 1
+                                                    break
+                                    
+                                    # Aktualisiere Set-Info-Anzeige mit neuem Fortschritt
+                                    self._update_set_info_display()
+                                    # Aktualisiere Fortschritts-Visualisierung
+                                    self._update_progress_visualization()
+                                    
+                                    # Bestimme Ziel-Box für Sortierung
+                                    part_color_name = match.get('bricklink_color', '')
+                                    self.current_part_box = self._determine_target_box(current_part_id, part_color_name)
+                                    self.current_detected_part_id = current_part_id
+                                    
+                                    box_num = self.current_part_box + 1
+                                    if self.current_part_box == self.reject_box:
+                                        print(f"Teil {current_part_id} -> Ausschuss (Box {box_num})")
+                                    else:
+                                        assigned_set = [s for s, b in self.set_to_box.items() if b == self.current_part_box][0]
+                                        print(f"Teil {current_part_id} -> Set {assigned_set} (Box {box_num})")
                                 else:
-                                    assigned_set = [s for s, b in self.set_to_box.items() if b == self.current_part_box][0]
-                                    print(f"Teil {current_part_id} -> Set {assigned_set} (Box {box_num})")
+                                    # RGB-Match unter 50% -> Ausschuss
+                                    self.current_part_box = self.reject_box
+                                    self.current_detected_part_id = None
+                                    print(f"RGB-Match zu niedrig ({rgb_match_percentage:.1f}%) < 50% -> Ausschuss")
+                                    print(f"  Erkannte Farbe: {match.get('detected_rgb')}")
+                                    print(f"  Erwartete LEGO-Farbe: {match.get('lego_rgb')} ({match.get('lego_color')})")
                 # Wenn kein Teil erkannt oder nicht im Set -> Ausschuss
                 if not current_part_id or not hasattr(self, 'current_part_box'):
                     self.current_part_box = self.reject_box
