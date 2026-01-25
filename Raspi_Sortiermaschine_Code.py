@@ -3228,27 +3228,16 @@ debug_title = tk.Label(
 )
 debug_title.pack(pady=(3, 3))
 
-# Stepper Status
-stepper_status_label = tk.Label(
+# Farbe Status
+color_status_label = tk.Label(
     debug_frame,
-    text="Schieber: ---",
+    text="🎨 Farbe: ---",
     font=('Courier', 9),
     bg='#1e1e1e',
-    fg='#ffffff',
+    fg='#ffeb3b',
     justify='left'
 )
-stepper_status_label.pack(pady=2)
-
-# Sensor Status
-sensor_status_label = tk.Label(
-    debug_frame,
-    text="Sensoren: Oben=? | Unten=?",
-    font=('Courier', 9),
-    bg='#1e1e1e',
-    fg='#ffffff',
-    justify='left'
-)
-sensor_status_label.pack(pady=2)
+color_status_label.pack(pady=2)
 
 def calculate_rgb_distance(rgb1, rgb2):
     """
@@ -3451,7 +3440,7 @@ class AutomationController:
     Keine Logik implementiert – nur die Struktur und Hooks.
     """
 
-    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn, sets_progress_frame_ref, set_input_frame_ref, stepper_status_lbl, sensor_status_lbl):
+    def __init__(self, tk_root: tk.Tk, progress_frame, current_status_lbl, status_lbl, set_info_frame, set_info_lbl, set_images_container, start_btn, pause_btn, stop_btn, sets_progress_frame_ref, set_input_frame_ref, color_status_lbl=None):
         self.root = tk_root
         self.state = AutomationState.INIT
         self.running = False
@@ -3521,64 +3510,21 @@ class AutomationController:
         print("Vibration Controller bereit")
         
         # Debug-Labels Referenzen speichern
-        self.stepper_status_label = stepper_status_lbl
-        self.sensor_status_label = sensor_status_lbl
-        print(f"Debug-Labels zugewiesen: stepper={stepper_status_lbl}, sensor={sensor_status_lbl}")
+        self.color_status_label = color_status_lbl
+        print(f"Debug-Labels zugewiesen: color={color_status_lbl}")
 
     def _update_debug_display(self):
-        """Aktualisiert Debug-Anzeige mit Stepper und Sensor Status"""
+        """Aktualisiert Debug-Anzeige mit erkannter Farbe"""
         try:
-            if not self.stepper_status_label or not self.sensor_status_label:
-                print("Debug-Labels nicht vorhanden!")
+            if not self.color_status_label:
                 return
             
-            # Stepper Status - nur PWM und Richtung
-            moving_status = "LÄUFT" if self.stepper.is_moving else "STEHT"
-            direction = self.stepper.last_direction.upper()
-            
-            # PWM Status
-            pwm_status = "AN" if (self.stepper.pwm_object is not None and self.stepper.is_moving) else "AUS"
-            
-            stepper_text = f"Schieber: {moving_status} | PWM: {pwm_status} | Richtung: {direction}"
-            self.stepper_status_label.config(text=stepper_text)
-            
-            # Sensor Status
-            upper_status = "?"
-            lower_status = "?"
-            
-            if self.stepper.gpio_initialized:
-                try:
-                    upper_val = GPIO.input(SENSOR_UPPER_PIN["bcm"])
-                    lower_val = GPIO.input(SENSOR_LOWER_PIN["bcm"])
-                    # Debug: Erste 5 Lesungen ausgeben
-                    if not hasattr(self, '_debug_read_count'):
-                        self._debug_read_count = 0
-                    
-                    if self._debug_read_count < 5:
-                        print(f"[DEBUG #{self._debug_read_count}] Sensor-Werte: Oben(GPIO{SENSOR_UPPER_PIN['bcm']})={upper_val}, Unten(GPIO{SENSOR_LOWER_PIN['bcm']})={lower_val}")
-                        self._debug_read_count += 1
-                    
-                    # SENSOR_UPPER (NC): 1 = angeschlagen (Kontakt geschlossen)
-                    # SENSOR_LOWER (NO): 0 = angeschlagen (Kontakt geschlossen)
-                    upper_status = "ANGESCHLAGEN" if upper_val == 1 else "FREI"
-                    lower_status = "ANGESCHLAGEN" if lower_val == 0 else "FREI"
-                except Exception as e:
-                    upper_status = f"ERR"
-                    lower_status = f"ERR"
-                    print(f"❌ Sensor Lesefehler: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                upper_status = "SIM"
-                lower_status = "SIM"
-            
-            sensor_text = f"Sensoren: Oben={upper_status} | Unten={lower_status}"
-            self.sensor_status_label.config(text=sensor_text)
+            # ===== FARBE STATUS (wenn Label vorhanden) =====
+            # Wird während ERKENNEN State aktualisiert
+            pass
             
         except Exception as e:
             print(f"Debug Display Update Fehler: {e}")
-            import traceback
-            traceback.print_exc()
 
     def _assign_boxes_to_sets(self):
         """Ordnet geladenen Sets Boxen zu (max 3 Sets, Rest = Ausschuss)."""
@@ -4302,6 +4248,15 @@ class AutomationController:
                 
                 if region:
                     color_info = get_dominant_color_simple(IMAGE_PATH, region)
+                    
+                    # ===== UPDATE FARBE DEBUG DISPLAY =====
+                    if color_info and self.color_status_label:
+                        detected_rgb = color_info.get("rgb", (0, 0, 0))
+                        detected_color_name = color_info.get("color_name", "Unbekannt")
+                        color_hex = color_info.get("hex", "---")
+                        color_text = f"🎨 {detected_color_name} | RGB{detected_rgb} | {color_hex}"
+                        self.color_status_label.config(text=color_text)
+                
                 # Ergebnisse anzeigen
                 if current_part_id:
                     info = f"ID: {current_part_id}\nName: {brick_name}\nErkannte Teile: {num_detected}"
@@ -4605,8 +4560,7 @@ automation = AutomationController(
     stop_button,
     sets_progress_frame,
     set_input_frame,
-    stepper_status_label,
-    sensor_status_label
+    color_status_label
 )
 
 # Button-Commands zuweisen
