@@ -1674,61 +1674,66 @@ def capture_and_identify():
 def extract_color_from_part_name(part_name):
     """
     Extrahiert den Farbnamen aus einem BrickLink-Teilenamen.
+    Sucht direkt gegen die LEGO-Farbdatenbank (Excel/CSV) statt gegen fest codierte Liste.
     BrickLink-Namen haben normalerweise das Format: "Color Name Part Description"
     
     :param part_name: Der vollständige Teilename von BrickLink
-    :return: Extrahierter Farbname oder leerer String
+    :return: Extrahierter Farbname aus der LEGO-Datenbank oder leerer String
     """
+    global lego_colors_df
+    
     if not part_name:
         return ""
     
-    # Häufige BrickLink-Farbnamen (erste Wörter des Teilnamens)
-    common_colors = [
-        # Grundfarben
-        "Black", "White", "Red", "Blue", "Yellow", "Green", "Orange", "Purple",
-        "Pink", "Brown", "Gray", "Grey", "Tan", 
-        
-        # Erweiterte Farbnamen (BrickLink-Stil)
-        "Bright Red", "Bright Blue", "Bright Yellow", "Bright Green", "Bright Orange",
-        "Dark Red", "Dark Blue", "Dark Yellow", "Dark Green", "Dark Orange", "Dark Gray", "Dark Grey",
-        "Light Gray", "Light Grey", "Light Blue", "Light Green", "Light Yellow",
-        "Medium Blue", "Medium Green", "Medium Orange",
-        
-        # Spezielle LEGO-Farben
-        "Reddish Brown", "Dark Tan", "Light Bluish Gray", "Dark Bluish Gray",
-        "Brick Yellow", "Earth Orange", "Sand Red", "Sand Blue", "Sand Green",
-        "Olive Green", "Dark Olive Green",
-        
-        # Transparente Farben
-        "Trans-Clear", "Trans-Red", "Trans-Blue", "Trans-Yellow", "Trans-Green",
-        "Trans-Orange", "Trans-Purple", "Trans-Pink", "Trans-Black",
-        "Trans-Light Blue", "Trans-Dark Blue", "Trans-Bright Green",
-        
-        # Chrome und Metallic
-        "Chrome Black", "Chrome Blue", "Chrome Green", "Chrome Gold", "Chrome Silver",
-        "Metallic Silver", "Metallic Gold", "Pearl Gold", "Pearl White",
-        
-        # Modulex und spezielle Serien
-        "Modulex White", "Modulex Black", "Modulex Red", "Modulex Blue",
-        "Duplo Green", "Fabuland Orange"
-    ]
+    part_name_lower = part_name.lower().strip()
     
-    # Sortiere nach Länge (längste zuerst), um "Dark Blue" vor "Blue" zu finden
-    common_colors.sort(key=len, reverse=True)
+    # ===== METHODE 1: Exakte Übereinstimmung gegen LEGO-Datenbank =====
+    if lego_colors_df is not None and not lego_colors_df.empty:
+        # Sortiere LEGO-Farben nach Länge (längste zuerst)
+        # Dies verhindert dass "Blue" vor "Dark Blue" geprueft wird
+        lego_colors_sorted = sorted(
+            lego_colors_df['Name'].unique(),
+            key=len,
+            reverse=True
+        )
+        
+        # Suche exakte Übereinstimmung am Anfang des Teil-Namens
+        for lego_color in lego_colors_sorted:
+            lego_color_lower = lego_color.lower().strip()
+            
+            # Check: Teil-Name beginnt mit dieser LEGO-Farbe
+            if part_name_lower.startswith(lego_color_lower + " ") or part_name_lower == lego_color_lower:
+                print(f"[Farb-Match] '{part_name}' → '{lego_color}' (exakte Übereinstimmung)")
+                return lego_color
+        
+        # ===== METHODE 2: Fuzzy-Matching für ähnliche Farben =====
+        from difflib import SequenceMatcher
+        
+        first_word = part_name.split()[0] if part_name.split() else ""
+        
+        if first_word and len(first_word) > 2:
+            best_match = None
+            best_ratio = 0.0
+            
+            for lego_color in lego_colors_sorted:
+                # Berechne Ähnlichkeit zwischen first_word und lego_color
+                ratio = SequenceMatcher(None, first_word.lower(), lego_color.lower()).ratio()
+                
+                # Akzeptiere Matches mit mindestens 70% Ähnlichkeit
+                if ratio > best_ratio and ratio > 0.70:
+                    best_match = lego_color
+                    best_ratio = ratio
+            
+            if best_match and best_ratio > 0.70:
+                print(f"[Farb-Match] '{part_name}' → '{best_match}' (Fuzzy {best_ratio*100:.0f}%)")
+                return best_match
     
-    # Suche nach bekannten Farbmustern am Anfang des Namens
-    part_name_lower = part_name.lower()
-    
-    for color in common_colors:
-        color_lower = color.lower()
-        if part_name_lower.startswith(color_lower + " ") or part_name_lower == color_lower:
-            return color
-    
-    # Fallback: Versuche das erste Wort zu extrahieren (könnte eine unbekannte Farbe sein)
+    # ===== FALLBACK: Wenn lego_colors_df nicht verfügbar =====
+    # Extrahiere einfach das erste Wort (Legacy-Behavior)
     first_word = part_name.split()[0] if part_name.split() else ""
     
-    # Prüfe ob das erste Wort wie ein Farbname aussieht (keine Zahlen, keine Sonderzeichen)
     if first_word and first_word.isalpha() and len(first_word) > 2:
+        print(f"[Farb-Match] '{part_name}' → '{first_word}' (Fallback)")
         return first_word
     
     return ""
