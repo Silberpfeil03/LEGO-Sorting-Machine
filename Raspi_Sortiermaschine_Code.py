@@ -2403,173 +2403,106 @@ def open_settings_window(parent_root, automation_controller=None):
         )
         recommendation_label.pack(pady=(0, 10), padx=10)
     
-    # --- Kamera Preview Steuerung ---
+    # --- Kamera Test (Einzelnes Bild) ---
     if automation_controller:
-        camera_frame = tk.LabelFrame(
+        camera_test_frame = tk.LabelFrame(
             debug_tab,
-            text="Kamera Preview",
+            text="🔷 Kamera Test - Bild aufnehmen",
             font=('Helvetica', 12, 'bold'),
             bg='#2b2b2b',
             fg='white',
             relief='flat',
             bd=2
         )
-        camera_frame.pack(fill='x', pady=(0, 15), padx=10)
+        camera_test_frame.pack(fill='x', pady=(0, 15), padx=10)
         
         # Info-Text
-        camera_info_label = tk.Label(
-            camera_frame,
-            text="Kamera-Vorschau aktivieren/deaktivieren.\nDeaktivierung kann Systemressourcen sparen.",
+        camera_test_info_label = tk.Label(
+            camera_test_frame,
+            text="Auf Knopfdruck wird ein Testbild aufgenommen und angezeigt.",
             font=('Helvetica', 9),
             bg='#2b2b2b',
             fg='#cccccc',
-            justify='left',
-            wraplength=550
+            justify='left'
         )
-        camera_info_label.pack(pady=(10, 5), padx=10)
+        camera_test_info_label.pack(pady=(10, 5), padx=10)
         
-        # Live-Vorschau-Bereich
-        preview_display_frame = tk.Frame(camera_frame, bg='#1a1a1a', relief='solid', bd=2)
-        preview_display_frame.pack(pady=(5, 10), padx=10)
-        
-        # Label für Kamera-Vorschau
-        preview_image_label = tk.Label(
-            preview_display_frame,
+        # Vorschau-Container mit Frame für besseres Layout
+        camera_test_display_frame = tk.Frame(
+            camera_test_frame,
             bg='#1a1a1a',
-            text="📷 Kamera-Vorschau\n(wird bei Aktivierung angezeigt)",
+            relief='solid',
+            bd=1,
+            width=500,
+            height=300
+        )
+        camera_test_display_frame.pack(pady=(5, 10), padx=10, fill='both', expand=False)
+        camera_test_display_frame.pack_propagate(False)
+        
+        # Vorschau-Bild Label
+        camera_test_image_label = tk.Label(
+            camera_test_display_frame,
+            bg='#1a1a1a',
+            text="[Kein Bild aufgenommen]",
             font=('Helvetica', 10),
             fg='#888888',
-            width=60,
-            height=15
-        )
-        preview_image_label.pack(padx=5, pady=5)
-        
-        # Variable für Update-Job
-        preview_update_job = [None]  # Liste verwenden für Closure
-        
-        def update_preview_image():
-            """Aktualisiert das Kamera-Vorschaubild"""
-            try:
-                if automation_controller.preview_enabled and preview_update_job[0] is not None:
-                    # Temporäres Bild aufnehmen
-                    temp_preview_path = "/tmp/settings_preview.jpg"
-                    picam2.start()
-                    picam2.capture_file(temp_preview_path)
-                    picam2.stop()
-                    
-                    # Bild laden und skalieren
-                    img = Image.open(temp_preview_path)
-                    # Auf 400x300 skalieren für Anzeige
-                    img.thumbnail((400, 300), Image.Resampling.LANCZOS)
-                    photo = ImageTk.PhotoImage(img)
-                    
-                    # Bild anzeigen
-                    preview_image_label.config(image=photo, text="")
-                    preview_image_label.image = photo  # Referenz behalten
-                    
-                    # Nächstes Update in 500ms
-                    preview_update_job[0] = settings_win.after(500, update_preview_image)
-            except Exception as e:
-                print(f"Fehler beim Aktualisieren der Vorschau: {e}")
-                # Bei Fehler trotzdem weiter versuchen
-                if preview_update_job[0] is not None:
-                    preview_update_job[0] = settings_win.after(1000, update_preview_image)
-        
-        # Status-Anzeige
-        preview_status_frame = tk.Frame(camera_frame, bg='#2b2b2b')
-        preview_status_frame.pack(pady=(5, 10))
-        
-        preview_status_label = tk.Label(
-            preview_status_frame,
-            text=f"Status: {'🟢 Aktiviert' if automation_controller.preview_enabled else '🔴 Deaktiviert'}",
-            font=('Helvetica', 10, 'bold'),
-            bg='#2b2b2b',
-            fg='#00ff00' if automation_controller.preview_enabled else '#ff4444',
+            anchor='center',
             justify='center'
         )
-        preview_status_label.pack()
+        camera_test_image_label.pack(fill='both', expand=True, padx=5, pady=5)
         
-        # Buttons
-        preview_button_frame = tk.Frame(camera_frame, bg='#2b2b2b')
-        preview_button_frame.pack(pady=(0, 15))
-        
-        def toggle_preview(enable, status_label):
-            """Aktiviert oder deaktiviert die Kamera-Preview"""
+        def test_camera_capture():
+            """Nimmt ein Testbild auf und zeigt es an"""
             try:
-                automation_controller.preview_enabled = enable
-                if enable:
-                    picam2.start_preview()
-                    status_label.config(
-                        text="Status: 🟢 Aktiviert",
-                        fg='#00ff00'
-                    )
-                    print("Kamera Preview aktiviert")
-                    # Starte Live-Vorschau-Updates
-                    if preview_update_job[0] is None:
-                        preview_update_job[0] = settings_win.after(100, update_preview_image)
-                else:
-                    # Stoppe Live-Vorschau-Updates
-                    if preview_update_job[0] is not None:
-                        settings_win.after_cancel(preview_update_job[0])
-                        preview_update_job[0] = None
+                camera_test_image_label.config(text="📷 Aufnahme läuft...", fg='#ffaa00', image="")
+                camera_test_image_label.image = None
+                camera_test_frame.update()
+                
+                # Bild aufnehmen (nutzt die bestehende capture_image Funktion)
+                temp_test_path = "/tmp/camera_test.jpg"
+                if capture_image(temp_test_path):
+                    # Bild laden und auf Vorschaugröße skalieren
+                    test_img = Image.open(temp_test_path)
+                    # Berechne Skalierung für max 500x280 Pixel (mit Padding)
+                    test_img.thumbnail((490, 290), Image.Resampling.LANCZOS)
                     
-                    picam2.stop_preview()
-                    status_label.config(
-                        text="Status: 🔴 Deaktiviert",
-                        fg='#ff4444'
-                    )
-                    # Setze Platzhalter zurück
-                    preview_image_label.config(
-                        image='',
-                        text="📷 Kamera-Vorschau\n(wird bei Aktivierung angezeigt)",
-                        fg='#888888'
-                    )
-                    preview_image_label.image = None
-                    print("Kamera Preview deaktiviert")
+                    # In PhotoImage konvertieren
+                    test_photo = ImageTk.PhotoImage(test_img)
+                    
+                    # Anzeigen
+                    camera_test_image_label.config(image=test_photo, text="", fg='#00ff00')
+                    camera_test_image_label.image = test_photo
+                    
+                    print("✅ Testbild erfolgreich aufgenommen und angezeigt")
+                else:
+                    camera_test_image_label.config(text="❌ Fehler: Aufnahme fehlgeschlagen", fg='#ff4444', image="")
+                    camera_test_image_label.image = None
+                    print("❌ Testbild-Aufnahme fehlgeschlagen")
+                    
             except Exception as e:
-                print(f"Fehler beim Umschalten der Preview: {e}")
-                status_label.config(
-                    text=f"Status: ⚠️ Fehler",
-                    fg='#ffaa00'
-                )
+                camera_test_image_label.config(text=f"❌ Fehler: {str(e)}", fg='#ff4444', image="")
+                camera_test_image_label.image = None
+                print(f"❌ Fehler beim Test-Kameraaufnahme: {e}")
         
-        # Preview aktivieren Button
-        enable_preview_btn = tk.Button(
-            preview_button_frame,
-            text="🟢 Aktivieren",
+        # Test Button
+        test_camera_button_frame = tk.Frame(camera_test_frame, bg='#2b2b2b')
+        test_camera_button_frame.pack(pady=(0, 15))
+        
+        test_camera_btn = tk.Button(
+            test_camera_button_frame,
+            text="📷 Testbild aufnehmen",
             font=('Helvetica', 11, 'bold'),
-            bg='#2d6a2e',
+            bg='#3a5a8b',
             fg='white',
-            activebackground='#3d7a3e',
+            activebackground='#4a6a9b',
             activeforeground='white',
             relief='flat',
-            padx=20,
-            pady=10,
+            padx=25,
+            pady=12,
             cursor='hand2',
-            command=lambda: toggle_preview(True, preview_status_label)
+            command=test_camera_capture
         )
-        enable_preview_btn.pack(side='left', padx=5)
-        
-        # Preview deaktivieren Button
-        disable_preview_btn = tk.Button(
-            preview_button_frame,
-            text="🔴 Deaktivieren",
-            font=('Helvetica', 11, 'bold'),
-            bg='#8b2e2e',
-            fg='white',
-            activebackground='#9b3e3e',
-            activeforeground='white',
-            relief='flat',
-            padx=20,
-            pady=10,
-            cursor='hand2',
-            command=lambda: toggle_preview(False, preview_status_label)
-        )
-        disable_preview_btn.pack(side='left', padx=5)
-        
-        # Starte Preview-Updates wenn bereits aktiviert
-        if automation_controller.preview_enabled:
-            preview_update_job[0] = settings_win.after(100, update_preview_image)
+        test_camera_btn.pack()
     
     # --- Sensor Status Anzeige ---
     sensor_frame = tk.LabelFrame(
@@ -3866,75 +3799,316 @@ class AutomationController:
         return results
 
     def show_missing_parts(self):
-        """Öffnet ein Fenster mit fehlenden Teilen je Set."""
+        """
+        Öffnet ein scrollbares, touch-freundliches Fenster mit fehlenden Teilen je Set.
+        Mit Mausrad-Support und großen Click-Targets für Touch.
+        """
         data = self._compute_missing_parts()
 
         win = tk.Toplevel(self.root)
         win.title("Fehlende Teile")
-        win.geometry("900x500")
+        win.geometry("1000x600")
         win.configure(bg='#1e1e1e')
+        
+        # Zentriere Fenster auf dem Bildschirm
+        win.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (win.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (win.winfo_height() // 2)
+        win.geometry(f"+{x}+{y}")
 
-        title = tk.Label(win, text="Fehlende Teile", font=('Helvetica', 14, 'bold'), bg='#1e1e1e', fg='white')
-        title.pack(pady=(10, 6))
+        # ===== HEADER =====
+        header_frame = tk.Frame(win, bg='#2b2b2b', relief='solid', bd=1)
+        header_frame.pack(fill='x', padx=0, pady=0)
+        
+        title = tk.Label(
+            header_frame,
+            text="📦 Fehlende Teile",
+            font=('Helvetica', 16, 'bold'),
+            bg='#2b2b2b',
+            fg='#4caf50',
+            pady=10
+        )
+        title.pack()
 
         if not data:
-            msg = tk.Label(win, text="Alle geladenen Sets sind vollständig erkannt!", font=('Helvetica', 12), bg='#1e1e1e', fg='#4caf50')
-            msg.pack(pady=20)
+            msg = tk.Label(
+                win,
+                text="✅ Alle geladenen Sets sind vollständig erkannt!",
+                font=('Helvetica', 14, 'bold'),
+                bg='#1e1e1e',
+                fg='#4caf50'
+            )
+            msg.pack(pady=40)
+            
+            close_btn = tk.Button(
+                win,
+                text="Schließen",
+                font=('Helvetica', 12, 'bold'),
+                bg='#3a3a3a',
+                fg='white',
+                activebackground='#4a4a4a',
+                relief='flat',
+                padx=20,
+                pady=10,
+                command=win.destroy
+            )
+            close_btn.pack(pady=20)
             return
 
-        container = tk.Frame(win, bg='#1e1e1e')
-        container.pack(fill='both', expand=True, padx=10, pady=10)
-
-        cols = ("set", "part", "color", "missing", "found", "required", "name")
-        tree = ttk.Treeview(container, columns=cols, show='headings', height=18)
-        tree.heading("set", text="Set")
-        tree.heading("part", text="Teil-ID")
-        tree.heading("color", text="Farbe")
-        tree.heading("missing", text="Fehlt")
-        tree.heading("found", text="Gefunden")
-        tree.heading("required", text="Benötigt")
-        tree.heading("name", text="Name")
-
-        tree.column("set", width=100, anchor='w')
-        tree.column("part", width=100, anchor='w')
-        tree.column("color", width=140, anchor='w')
-        tree.column("missing", width=70, anchor='center')
-        tree.column("found", width=80, anchor='center')
-        tree.column("required", width=80, anchor='center')
-        tree.column("name", width=280, anchor='w')
-
-        vsb = tk.Scrollbar(container, orient='vertical', command=tree.yview)
-        hsb = tk.Scrollbar(container, orient='horizontal', command=tree.xview)
-        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        tree.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
-
-        container.grid_rowconfigure(0, weight=1)
-        container.grid_columnconfigure(0, weight=1)
-
-        for entry in data:
-            set_num = entry['set_number']
-            for m in entry['missing']:
-                tree.insert('', 'end', values=(
-                    set_num,
-                    m.get('id', ''),
-                    m.get('color', ''),
-                    m.get('missing', 0),
-                    m.get('found', 0),
-                    m.get('required', 0),
-                    m.get('name', '')
-                ))
-
-        info_text = tk.Label(
-            win,
-            text="Berechnung erfolgt on-demand aus geladenen Sets und erkannten Teilen.",
-            font=('Helvetica', 9),
+        # ===== SCROLLBARER CONTAINER mit Canvas =====
+        canvas_frame = tk.Frame(win, bg='#1e1e1e')
+        canvas_frame.pack(fill='both', expand=True, padx=0, pady=0)
+        
+        # Canvas mit Scrollbar
+        canvas = tk.Canvas(
+            canvas_frame,
             bg='#1e1e1e',
-            fg='#888888'
+            highlightthickness=0,
+            borderwidth=0
         )
-        info_text.pack(pady=(6, 10))
+        scrollbar = tk.Scrollbar(canvas_frame, orient='vertical', command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg='#1e1e1e')
+        
+        scrollable_frame.bind(
+            '<Configure>',
+            lambda e: canvas.configure(scrollregion=canvas.bbox('all'))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # ===== MAUSRAD SCROLLING (Touch + Desktop) =====
+        def on_mousewheel(event):
+            """Mausrad-Scroll für Windows/Linux"""
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        
+        def on_scroll_up(event):
+            """Scroll-Up für Linux"""
+            canvas.yview_scroll(-3, 'units')
+        
+        def on_scroll_down(event):
+            """Scroll-Down für Linux"""
+            canvas.yview_scroll(3, 'units')
+        
+        canvas.bind_all('<MouseWheel>', on_mousewheel)  # Windows/macOS
+        canvas.bind_all('<Button-4>', on_scroll_up)      # Linux
+        canvas.bind_all('<Button-5>', on_scroll_down)    # Linux
+        
+        # ===== TOUCH-FRIENDLY SCROLLING =====
+        def on_scrollbar_click(event):
+            """Touch-freundliche Scrollbar"""
+            canvas.yview_moveto(scrollbar.get()[0])
+        
+        scrollbar.bind('<Button-1>', on_scrollbar_click)
+        
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y', padx=2)
+        
+        # ===== TEILE-LISTE GENERIEREN =====
+        row_num = 0
+        
+        # CSS-ähnliche Styling für alternating rows
+        for set_idx, entry in enumerate(data):
+            set_num = entry['set_number']
+            missing_parts = entry['missing']
+            total_required = entry['total_required']
+            total_found = entry['total_found']
+            
+            # Set-Header mit Fortschrittsanzeige
+            set_header = tk.Frame(scrollable_frame, bg='#2b2b2b', relief='solid', bd=1)
+            set_header.pack(fill='x', padx=5, pady=5)
+            
+            set_header_label = tk.Label(
+                set_header,
+                text=f"Set {set_num} — {total_found}/{total_required} Teile gefunden",
+                font=('Helvetica', 12, 'bold'),
+                bg='#2b2b2b',
+                fg='#2196f3',
+                anchor='w',
+                padx=10,
+                pady=8
+            )
+            set_header_label.pack(fill='x')
+            
+            # Fortschrittsbalken
+            progress_percent = (total_found / total_required * 100) if total_required > 0 else 0
+            progress_color = '#4caf50' if progress_percent >= 100 else '#ff9800' if progress_percent >= 50 else '#f44336'
+            
+            progress_frame = tk.Frame(set_header, bg='#1e1e1e', height=6)
+            progress_frame.pack(fill='x', padx=10, pady=(0, 8))
+            
+            progress_bar = tk.Frame(progress_frame, bg=progress_color, height=6)
+            progress_bar.pack(side='left', fill='x', expand=False)
+            progress_bar.config(width=int(progress_percent * 2))  # Skaliere für Breite
+            
+            progress_text = tk.Label(
+                progress_frame,
+                text=f"{progress_percent:.0f}%",
+                font=('Helvetica', 8),
+                bg='#1e1e1e',
+                fg=progress_color,
+                padx=5
+            )
+            progress_text.pack(side='left')
+            
+            # Teile-Tabelle für dieses Set
+            parts_frame = tk.Frame(scrollable_frame, bg='#1a1a1a', relief='flat')
+            parts_frame.pack(fill='x', padx=10, pady=(0, 10))
+            
+            # Tabellen-Header
+            header_labels = [
+                ('Teil-ID', 0.10),
+                ('Farbe', 0.20),
+                ('Name', 0.45),
+                ('Fehlt', 0.08),
+                ('Gefunden', 0.08),
+                ('Benötigt', 0.09),
+            ]
+            
+            header_row = tk.Frame(parts_frame, bg='#2b2b2b', height=35)
+            header_row.pack(fill='x', padx=0, pady=0)
+            header_row.config(height=35)
+            
+            for label_text, width in header_labels:
+                header_label = tk.Label(
+                    header_row,
+                    text=label_text,
+                    font=('Helvetica', 9, 'bold'),
+                    bg='#2b2b2b',
+                    fg='white',
+                    padx=8,
+                    pady=8,
+                    anchor='w',
+                    width=int(width * 50)
+                )
+                header_label.pack(side='left', fill='both', expand=True)
+            
+            # Daten-Zeilen
+            for part_idx, part in enumerate(missing_parts):
+                # Alternating row colors für bessere Lesbarkeit
+                row_bg = '#252525' if part_idx % 2 == 0 else '#1a1a1a'
+                
+                row_frame = tk.Frame(parts_frame, bg=row_bg, relief='flat', height=40)
+                row_frame.pack(fill='x', padx=0, pady=0)
+                row_frame.config(height=40)
+                
+                # Touch-freundliche große Buttons/Clickable Areas
+                row_frame.bind('<Button-1>', lambda e: None)  # Click-Event aktivieren
+                
+                # Teil-ID
+                part_id_label = tk.Label(
+                    row_frame,
+                    text=part.get('id', ''),
+                    font=('Helvetica', 9),
+                    bg=row_bg,
+                    fg='#00ff00',
+                    padx=8,
+                    pady=8,
+                    anchor='w',
+                    width=6
+                )
+                part_id_label.pack(side='left', fill='both', expand=True)
+                
+                # Farbe
+                color_label = tk.Label(
+                    row_frame,
+                    text=part.get('color', 'Keine'),
+                    font=('Helvetica', 9),
+                    bg=row_bg,
+                    fg='#ffeb3b',
+                    padx=8,
+                    pady=8,
+                    anchor='w',
+                    width=14
+                )
+                color_label.pack(side='left', fill='both', expand=True)
+                
+                # Name (hauptsächlich)
+                name_label = tk.Label(
+                    row_frame,
+                    text=part.get('name', ''),
+                    font=('Helvetica', 9),
+                    bg=row_bg,
+                    fg='white',
+                    padx=8,
+                    pady=8,
+                    anchor='w',
+                    width=32,
+                    wraplength=250
+                )
+                name_label.pack(side='left', fill='both', expand=True)
+                
+                # Fehlt (rot)
+                missing_label = tk.Label(
+                    row_frame,
+                    text=str(part.get('missing', 0)),
+                    font=('Helvetica', 10, 'bold'),
+                    bg=row_bg,
+                    fg='#ff5252',
+                    padx=8,
+                    pady=8,
+                    anchor='center',
+                    width=4
+                )
+                missing_label.pack(side='left', fill='both', expand=True)
+                
+                # Gefunden (grün)
+                found_label = tk.Label(
+                    row_frame,
+                    text=str(part.get('found', 0)),
+                    font=('Helvetica', 10, 'bold'),
+                    bg=row_bg,
+                    fg='#4caf50',
+                    padx=8,
+                    pady=8,
+                    anchor='center',
+                    width=4
+                )
+                found_label.pack(side='left', fill='both', expand=True)
+                
+                # Benötigt
+                required_label = tk.Label(
+                    row_frame,
+                    text=str(part.get('required', 0)),
+                    font=('Helvetica', 10),
+                    bg=row_bg,
+                    fg='#ffffff',
+                    padx=8,
+                    pady=8,
+                    anchor='center',
+                    width=4
+                )
+                required_label.pack(side='left', fill='both', expand=True)
+        
+        # ===== FOOTER =====
+        footer_frame = tk.Frame(win, bg='#2b2b2b', relief='solid', bd=1)
+        footer_frame.pack(fill='x', padx=0, pady=0)
+        
+        info_text = tk.Label(
+            footer_frame,
+            text="💡 Berechnung erfolgt on-demand. Scrollbar: Mausrad oder Touch-Gesten.",
+            font=('Helvetica', 9),
+            bg='#2b2b2b',
+            fg='#888888',
+            pady=8
+        )
+        info_text.pack()
+        
+        # ===== CLOSE BUTTON =====
+        close_btn = tk.Button(
+            footer_frame,
+            text="✓ Schließen",
+            font=('Helvetica', 11, 'bold'),
+            bg='#3a7ca5',
+            fg='white',
+            activebackground='#4a8cb5',
+            relief='flat',
+            padx=20,
+            pady=8,
+            cursor='hand2',
+            command=win.destroy
+        )
+        close_btn.pack(pady=(0, 8))
 
     def clear_sets(self):
         """Löscht alle geladenen Sets."""
