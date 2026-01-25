@@ -1314,10 +1314,70 @@ def get_center_region_from_image(image_path, region_size_percent=30):
         print(f"Fehler bei der Regionserkennung: {e}")
         return None
 
+def extract_bounding_box_region(bbox_data, image_width, image_height):
+    """
+    Konvertiert verschiedene Bounding-Box-Formate in (x, y, width, height).
+    
+    Unterstützte Formate:
+    - dict mit (x, y, width, height): {"x": 100, "y": 50, "width": 200, "height": 150}
+    - dict mit (left, upper, right, lower): {"left": 0.1, "upper": 0.2, "right": 0.8, "lower": 0.9}
+    - list/tuple [x, y, width, height]
+    - list/tuple [left, upper, right, lower] (mit image dimensions)
+    
+    :return: Tuple (x, y, width, height) oder None
+    """
+    if not bbox_data or not isinstance(bbox_data, (dict, list, tuple)):
+        return None
+    
+    try:
+        if isinstance(bbox_data, dict):
+            # Format 1: x, y, width, height
+            if all(k in bbox_data for k in ["x", "y", "width", "height"]):
+                return (
+                    int(bbox_data["x"]),
+                    int(bbox_data["y"]),
+                    int(bbox_data["width"]),
+                    int(bbox_data["height"])
+                )
+            # Format 2: left, upper, right, lower (normalisiert oder absolut)
+            elif all(k in bbox_data for k in ["left", "upper", "right", "lower"]):
+                left = bbox_data["left"]
+                upper = bbox_data["upper"]
+                right = bbox_data["right"]
+                lower = bbox_data["lower"]
+                
+                # Prüfe ob normalisiert (0.0-1.0) oder absolut
+                if left <= 1.0 and upper <= 1.0 and right <= 1.0 and lower <= 1.0:
+                    # Normalisiert
+                    x = int(left * image_width)
+                    y = int(upper * image_height)
+                    width = int((right - left) * image_width)
+                    height = int((lower - upper) * image_height)
+                else:
+                    # Absolut
+                    x = int(left)
+                    y = int(upper)
+                    width = int(right - left)
+                    height = int(lower - upper)
+                return (x, y, width, height) if width > 0 and height > 0 else None
+        
+        elif isinstance(bbox_data, (list, tuple)) and len(bbox_data) == 4:
+            return tuple(int(v) for v in bbox_data)
+    
+    except (ValueError, TypeError):
+        pass
+    
+    return None
+
+
 def identify_brick(image_path):
     """
     Bild an die API schicken und das Ergebnis zurückgeben.
     Zusätzlich wird die vollständige API-Antwort zurückgegeben.
+    
+    Returns:
+        (brick_id, brick_name, img_url, num_detected, api_response, bbox_info)
+        wobei bbox_info ein Dict mit Details zur Bounding-Box ist
     """
     try:
         with open(image_path, "rb") as img_file:
@@ -1333,19 +1393,34 @@ def identify_brick(image_path):
                 print(result)
                 
                 items = result.get("items", [])
+                bbox_info = {
+                    "top_level_bbox": result.get("bounding_box"),
+                    "item_bbox": None,
+                    "source": None
+                }
+                
                 if not items:
-                    return None, None, None, 0, result
+                    return None, None, None, 0, result, bbox_info
+                
                 best_item = max(items, key=lambda x: x.get("score", 0))
                 brick_id = best_item.get("id")
                 brick_name = best_item.get("name")
                 img_url = best_item.get("img_url")
-                return brick_id, brick_name, img_url, len(items), result
+                
+                # Prüfe ob Best-Item eine Box hat
+                for key in ["bbox", "bounding_box", "cage", "region", "box"]:
+                    if key in best_item:
+                        bbox_info["item_bbox"] = best_item[key]
+                        bbox_info["item_bbox_key"] = key
+                        break
+                
+                return brick_id, brick_name, img_url, len(items), result, bbox_info
             else:
                 print(f"Fehler bei der API-Anfrage: {response.status_code}")
-                return None, None, None, 0, None
+                return None, None, None, 0, None, {}
     except Exception as e:
         print(f"Fehler beim Hochladen des Bildes: {e}")
-        return None, None, None, 0, None
+        return None, None, None, 0, None, {}
 
 def display_image_from_url(img_url, label, max_size=(200, 200)):
     """
@@ -1480,31 +1555,39 @@ def capture_and_identify():
         show_last_captured_image()  # Zeige das letzte Bild an
         
         # Brick-Erkennung über API
-        current_part_id, brick_name, img_url, num_detected, api_response = identify_brick(IMAGE_PATH)
+        current_part_id, brick_name, img_url, num_detected, api_response, bbox_info = identify_brick(IMAGE_PATH)
         
         # Farberkennung durchführen
         color_info = None
         
         # Überprüfe ob die API Bounding Box-Informationen liefert
         region = None
-        if api_response and "items" in api_response and api_response["items"]:
-            best_item = max(api_response["items"], key=lambda x: x.get("score", 0))
+        if api_response:
+            try:
+                from PIL import Image as PILImage
+                img = PILImage.open(IMAGE_PATH)
+                img_width, img_height = img.size
+            except:
+                img_width, img_height = 640, 480
             
-            # Suche nach verschiedenen möglichen Bounding Box-Schlüsseln
-            for key in ["bbox", "bounding_box", "cage", "region", "box"]:
-                if key in best_item:
-                    bbox_data = best_item[key]
-                    print(f"Gefundene Bounding Box ({key}): {bbox_data}")
-                    
-                    # Versuche verschiedene Formate zu parsen
-                    if isinstance(bbox_data, dict):
-                        # Format: {"x": 10, "y": 20, "width": 100, "height": 80}
-                        if all(k in bbox_data for k in ["x", "y", "width", "height"]):
-                            region = (bbox_data["x"], bbox_data["y"], bbox_data["width"], bbox_data["height"])
-                    elif isinstance(bbox_data, list) and len(bbox_data) == 4:
-                        # Format: [x, y, width, height] oder [x1, y1, x2, y2]
-                        region = tuple(bbox_data)
-                    break
+            if "items" in api_response and api_response["items"]:
+                best_item = max(api_response["items"], key=lambda x: x.get("score", 0))
+                
+                # Suche nach verschiedenen möglichen Bounding Box-Schlüsseln
+                for key in ["bbox", "bounding_box", "cage", "region", "box"]:
+                    if key in best_item:
+                        region = extract_bounding_box_region(best_item[key], img_width, img_height)
+                        if region:
+                            print(f"✓ Bounding-Box gefunden aus best_item['{key}']: {region}")
+                        break
+            
+            # Fallback: Top-Level Bounding-Box
+            if region is None and "bounding_box" in api_response:
+                top_bbox = api_response["bounding_box"]
+                if top_bbox.get("score", 0) > 0:
+                    region = extract_bounding_box_region(top_bbox, img_width, img_height)
+                    if region:
+                        print(f"✓ Top-Level Bounding-Box: {region}")
         
         # Wenn keine Bounding Box gefunden, verwende die zentrale Region
         if region is None:
@@ -4166,22 +4249,57 @@ class AutomationController:
             case AutomationState.ERKENNEN:
                 # Erkennung durchführen (Brick + Farbe) und GUI aktualisieren
                 self.current_status_label.config(text=" Erkenne Teil...", fg='#2196f3')
-                current_part_id, brick_name, img_url, num_detected, api_response = identify_brick(IMAGE_PATH)
+                current_part_id, brick_name, img_url, num_detected, api_response, bbox_info = identify_brick(IMAGE_PATH)
                 color_info = None
                 region = None
-                if api_response and "items" in api_response and api_response["items"]:
-                    best_item = max(api_response["items"], key=lambda x: x.get("score", 0))
-                    for key in ["bbox", "bounding_box", "cage", "region", "box"]:
-                        if key in best_item:
-                            bbox_data = best_item[key]
-                            if isinstance(bbox_data, dict):
-                                if all(k in bbox_data for k in ["x", "y", "width", "height"]):
-                                    region = (bbox_data["x"], bbox_data["y"], bbox_data["width"], bbox_data["height"])
-                            elif isinstance(bbox_data, list) and len(bbox_data) == 4:
-                                region = tuple(bbox_data)
-                            break
-                if region is None:
-                    region = get_center_region_from_image(IMAGE_PATH)
+                
+                if api_response:
+                    # Versuche Image-Dimensionen zu bekommen (für Koordinaten-Normalisierung)
+                    try:
+                        from PIL import Image as PILImage
+                        img = PILImage.open(IMAGE_PATH)
+                        img_width, img_height = img.size
+                    except:
+                        img_width, img_height = 640, 480  # Default fallback
+                    
+                    # DEBUG: Bounding-Box Informationen ausgeben
+                    print("\n" + "="*60)
+                    print("BOUNDING-BOX ANALYSE:")
+                    print("="*60)
+                    
+                    # Strategie 1: Bounding-Box aus Best-Item auslesen
+                    if "items" in api_response and api_response["items"]:
+                        best_item = max(api_response["items"], key=lambda x: x.get("score", 0))
+                        for key in ["bbox", "bounding_box", "cage", "region", "box"]:
+                            if key in best_item:
+                                region = extract_bounding_box_region(best_item[key], img_width, img_height)
+                                if region:
+                                    print(f"✓ STRATEGIE 1 - Bounding-Box aus best_item['{key}']: {region}")
+                                    print(f"  Item ID: {best_item.get('id')}, Score: {best_item.get('score'):.3f}")
+                                    break
+                    
+                    # Strategie 2: Top-Level Bounding-Box als Fallback
+                    if region is None and "bounding_box" in api_response:
+                        top_bbox = api_response["bounding_box"]
+                        top_score = top_bbox.get("score", 0)
+                        # Prüfe ob Top-Level BBox gültig ist (Score > 0)
+                        if top_score > 0:
+                            region = extract_bounding_box_region(top_bbox, img_width, img_height)
+                            if region:
+                                print(f"✓ STRATEGIE 2 - Top-Level Bounding-Box: {region}")
+                                print(f"  Top-Level Score: {top_score:.3f}, Format: absolute")
+                        else:
+                            print(f"ℹ Top-Level Box vorhanden aber Score=0 (ignoriert)")
+                    
+                    # Strategie 3: Zentrale Region als letzter Fallback
+                    if region is None:
+                        region = get_center_region_from_image(IMAGE_PATH)
+                        print(f"ℹ STRATEGIE 3 - Fallback auf zentrale Region: {region}")
+                    
+                    print(f"Erkannte Items: {num_detected}")
+                    print(f"Bild-Dimensionen: {img_width}x{img_height}")
+                    print("="*60 + "\n")
+                
                 if region:
                     color_info = get_dominant_color_simple(IMAGE_PATH, region)
                 # Ergebnisse anzeigen
