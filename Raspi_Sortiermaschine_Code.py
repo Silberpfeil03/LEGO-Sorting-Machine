@@ -41,6 +41,15 @@ picam2 = Picamera2()
 camera_config = picam2.create_still_configuration()
 picam2.configure(camera_config)
 
+# Globale Kamera-Einstellungen (Weißabgleich, Autofokus)
+# Diese werden im Debug-Menü konfiguriert und für alle Aufnahmen verwendet
+camera_settings = {
+    "awb_mode": "auto",  # Auto-Weißabgleich Modus: auto, daylight, cloudy, tungsten, fluorescent, indoor, custom
+    "awb_gains": None,   # Manuelle AWB-Gains (red_gain, blue_gain) - nur wenn awb_mode="custom"
+    "af_mode": "auto",   # Autofokus Modus: auto, manual, continuous
+    "lens_position": 0.0,  # Manuelle Fokusposition (0.0 = unendlich, höher = näher) - nur wenn af_mode="manual"
+}
+
 # --- LED minimal: SPI (MOSI GPIO10) oder rpi_ws281x / NeoPixel-Erkennung ---
 try:
     import spidev
@@ -632,7 +641,7 @@ class VibrationController:
     - Beide Rüttler: Software-PWM
     - Nur aktiv in WARTEN_AUF_TEIL State (wenn auf Teile gewartet wird)
     - Duty Cycle einstellbar (50% Standard)
-    - Pattern: 2 Sekunden rütteln, 1 Sekunde Pause, wiederholt
+    - Pattern: Konfigurierbar (Standard: 1s AN / 1s AUS)
     """
     def __init__(self):
         self.vib1_pin = None
@@ -647,12 +656,12 @@ class VibrationController:
         # Duty Cycle (0-100%) - einstellbar
         self.duty_cycle = 50  # Standard: 50%
         
-        # Pattern-Steuerung für 2s rütteln / 1s Pause
+        # Pattern-Steuerung für 1s rütteln / 1s Pause (konfigurierbar)
         self.pattern_active = False
         self.pattern_start_time = 0
         self.pattern_phase = "vibrate"  # "vibrate" oder "pause"
-        self.vibrate_duration = 2.0  # 2 Sekunden rütteln
-        self.pause_duration = 1.0    # 1 Sekunde Pause
+        self.vibrate_duration = 1.0  # 1 Sekunde rütteln (AN-Phase)
+        self.pause_duration = 1.0    # 1 Sekunde Pause (AUS-Phase)
     
     def init_vibration(self):
         """Initialisiert beide Rüttler und Kill-Pin"""
@@ -774,6 +783,16 @@ class VibrationController:
                 print(f"Rüttler Duty Cycle auf {self.duty_cycle}% gesetzt")
             except Exception as e:
                 print(f"Fehler beim Setzen des Duty Cycles: {e}")
+    
+    def set_vibrate_duration(self, seconds):
+        """Setzt die AN-Phase Dauer in Sekunden (0.1-5.0)"""
+        self.vibrate_duration = max(0.1, min(5.0, float(seconds)))
+        print(f"Rüttler AN-Phase: {self.vibrate_duration}s")
+    
+    def set_pause_duration(self, seconds):
+        """Setzt die AUS-Phase Dauer in Sekunden (0.1-5.0)"""
+        self.pause_duration = max(0.1, min(5.0, float(seconds)))
+        print(f"Rüttler AUS-Phase: {self.pause_duration}s")
     
     def test(self, duration=2.0):
         """Testet Rüttler für eine bestimmte Zeit (Sekunden)"""
@@ -991,7 +1010,9 @@ def capture_image(image_path):
     """
     Bild mit Picamera2 aufnehmen und lokal speichern.
     Vorher: LED-Ring komplett auf Weiß einschalten (volle Helligkeit).
+    Wendet globale Kamera-Einstellungen (Weißabgleich, Autofokus) an.
     """
+    global camera_settings
     try:
         # LED kurz auf Weiß setzen, damit das Motiv beleuchtet ist
         try:
@@ -1000,6 +1021,56 @@ def capture_image(image_path):
             print(f"LED vor Aufnahme Fehler: {e}")
 
         picam2.start()
+        
+        # Kamera-Einstellungen anwenden
+        try:
+            controls = {}
+            
+            # Weißabgleich-Einstellungen
+            awb_mode = camera_settings.get("awb_mode", "auto")
+            if awb_mode == "custom" and camera_settings.get("awb_gains"):
+                # Manueller Weißabgleich mit gespeicherten Gains
+                controls["AwbEnable"] = False
+                controls["ColourGains"] = camera_settings["awb_gains"]
+                print(f"Kamera: Manueller AWB mit Gains {camera_settings['awb_gains']}")
+            else:
+                # Auto-Weißabgleich
+                controls["AwbEnable"] = True
+                # AWB-Modus-Mapping (Picamera2 verwendet Zahlen)
+                awb_modes = {
+                    "auto": 0,
+                    "incandescent": 1,
+                    "tungsten": 2,
+                    "fluorescent": 3,
+                    "indoor": 4,
+                    "daylight": 5,
+                    "cloudy": 6
+                }
+                if awb_mode in awb_modes:
+                    controls["AwbMode"] = awb_modes[awb_mode]
+            
+            # Autofokus-Einstellungen
+            af_mode = camera_settings.get("af_mode", "auto")
+            if af_mode == "manual":
+                # Manueller Fokus
+                controls["AfMode"] = 0  # Manual
+                lens_pos = camera_settings.get("lens_position", 0.0)
+                controls["LensPosition"] = lens_pos
+                print(f"Kamera: Manueller Fokus bei Position {lens_pos}")
+            elif af_mode == "continuous":
+                controls["AfMode"] = 2  # Continuous
+            else:
+                controls["AfMode"] = 1  # Auto (single shot)
+            
+            # Controls anwenden
+            if controls:
+                picam2.set_controls(controls)
+                # Kurz warten damit Einstellungen wirksam werden
+                import time
+                time.sleep(0.3)
+        except Exception as e:
+            print(f"Kamera-Einstellungen konnten nicht angewendet werden: {e}")
+        
         picam2.capture_file(image_path)
         picam2.stop()
 
@@ -2251,8 +2322,131 @@ def open_settings_window(parent_root, automation_controller=None):
     )
     gate_frame.pack(fill='x', pady=(0, 15), padx=10)
     
+    # --- Klappe OFFEN Position Slider ---
+    gate_open_row_frame = tk.Frame(gate_frame, bg='#2b2b2b')
+    gate_open_row_frame.pack(fill='x', padx=10, pady=(10, 5))
+    
+    gate_open_label = tk.Label(
+        gate_open_row_frame,
+        text="Position OFFEN:",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    gate_open_label.pack(side='left')
+    
+    # Wert-Anzeige
+    gate_open_value_label = tk.Label(
+        gate_open_row_frame,
+        text=f"{servo.gate_positions['open']}°",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#00ff00',
+        width=6
+    )
+    gate_open_value_label.pack(side='right', padx=(5, 0))
+    
+    # Test-Button
+    gate_open_test_btn = tk.Button(
+        gate_open_row_frame,
+        text="Test",
+        font=('Helvetica', 9),
+        bg='#2d6a2e',
+        fg='white',
+        activebackground='#3d7a3e',
+        relief='flat',
+        padx=10,
+        command=servo.open_gate
+    )
+    gate_open_test_btn.pack(side='right', padx=(5, 5))
+    
+    # Slider
+    def update_gate_open_value(value):
+        """Update Klappe Offen Position"""
+        gate_open_value_label.config(text=f"{value}°")
+        servo.gate_positions["open"] = int(value)
+    
+    gate_open_slider = tk.Scale(
+        gate_open_row_frame,
+        from_=0,
+        to=180,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a3a',
+        activebackground='#4a4a4a',
+        command=update_gate_open_value
+    )
+    gate_open_slider.set(servo.gate_positions["open"])
+    gate_open_slider.pack(side='right', fill='x', expand=True, padx=(0, 5))
+    
+    # --- Klappe GESCHLOSSEN Position Slider ---
+    gate_closed_row_frame = tk.Frame(gate_frame, bg='#2b2b2b')
+    gate_closed_row_frame.pack(fill='x', padx=10, pady=5)
+    
+    gate_closed_label = tk.Label(
+        gate_closed_row_frame,
+        text="Position GESCHLOSSEN:",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    gate_closed_label.pack(side='left')
+    
+    # Wert-Anzeige
+    gate_closed_value_label = tk.Label(
+        gate_closed_row_frame,
+        text=f"{servo.gate_positions['closed']}°",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#ff8800',
+        width=6
+    )
+    gate_closed_value_label.pack(side='right', padx=(5, 0))
+    
+    # Test-Button
+    gate_closed_test_btn = tk.Button(
+        gate_closed_row_frame,
+        text="Test",
+        font=('Helvetica', 9),
+        bg='#8b2e2e',
+        fg='white',
+        activebackground='#9b3e3e',
+        relief='flat',
+        padx=10,
+        command=servo.close_gate
+    )
+    gate_closed_test_btn.pack(side='right', padx=(5, 5))
+    
+    # Slider
+    def update_gate_closed_value(value):
+        """Update Klappe Geschlossen Position"""
+        gate_closed_value_label.config(text=f"{value}°")
+        servo.gate_positions["closed"] = int(value)
+    
+    gate_closed_slider = tk.Scale(
+        gate_closed_row_frame,
+        from_=0,
+        to=180,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a3a',
+        activebackground='#4a4a4a',
+        command=update_gate_closed_value
+    )
+    gate_closed_slider.set(servo.gate_positions["closed"])
+    gate_closed_slider.pack(side='right', fill='x', expand=True, padx=(0, 5))
+    
+    # --- Buttons für schnelles Öffnen/Schließen ---
     gate_control_frame = tk.Frame(gate_frame, bg='#2b2b2b')
-    gate_control_frame.pack(pady=15)
+    gate_control_frame.pack(pady=(10, 15))
     
     # Klappe öffnen Button
     open_gate_btn = tk.Button(
@@ -2350,9 +2544,105 @@ def open_settings_window(parent_root, automation_controller=None):
         value_label.config(text=f"{value}%")
         vib_ctrl.set_duty_cycle(int(value))
     
+    # AN-Phase Slider (Vibrationsdauer)
+    vibrate_row_frame = tk.Frame(vibration_frame, bg='#2b2b2b')
+    vibrate_row_frame.pack(fill='x', padx=10, pady=5)
+    
+    vibrate_label = tk.Label(
+        vibrate_row_frame,
+        text="AN-Phase (Sekunden):",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    vibrate_label.pack(side='left')
+    
+    # Wert-Anzeige
+    vibrate_value_label = tk.Label(
+        vibrate_row_frame,
+        text=f"{vibration.vibrate_duration}s",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#00ff00',
+        width=6
+    )
+    vibrate_value_label.pack(side='right', padx=(5, 0))
+    
+    # AN-Phase Slider (0.1 - 5.0 Sekunden)
+    vibrate_slider = tk.Scale(
+        vibrate_row_frame,
+        from_=0.1,
+        to=5.0,
+        resolution=0.1,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a3a',
+        activebackground='#4a4a4a',
+        command=lambda val: update_vibrate_duration(val, vibrate_value_label, vibration)
+    )
+    vibrate_slider.set(vibration.vibrate_duration)
+    vibrate_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+    
+    def update_vibrate_duration(value, value_label, vib_ctrl):
+        """Update AN-Phase Dauer"""
+        value_label.config(text=f"{float(value)}s")
+        vib_ctrl.set_vibrate_duration(float(value))
+    
+    # AUS-Phase Slider (Pausendauer)
+    pause_row_frame = tk.Frame(vibration_frame, bg='#2b2b2b')
+    pause_row_frame.pack(fill='x', padx=10, pady=5)
+    
+    pause_label = tk.Label(
+        pause_row_frame,
+        text="AUS-Phase (Sekunden):",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    pause_label.pack(side='left')
+    
+    # Wert-Anzeige
+    pause_value_label = tk.Label(
+        pause_row_frame,
+        text=f"{vibration.pause_duration}s",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#ff8800',
+        width=6
+    )
+    pause_value_label.pack(side='right', padx=(5, 0))
+    
+    # AUS-Phase Slider (0.1 - 5.0 Sekunden)
+    pause_slider = tk.Scale(
+        pause_row_frame,
+        from_=0.1,
+        to=5.0,
+        resolution=0.1,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a3a',
+        activebackground='#4a4a4a',
+        command=lambda val: update_pause_duration(val, pause_value_label, vibration)
+    )
+    pause_slider.set(vibration.pause_duration)
+    pause_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+    
+    def update_pause_duration(value, value_label, vib_ctrl):
+        """Update AUS-Phase Dauer"""
+        value_label.config(text=f"{float(value)}s")
+        vib_ctrl.set_pause_duration(float(value))
+    
     # Test Button
     test_row_frame = tk.Frame(vibration_frame, bg='#2b2b2b')
-    test_row_frame.pack(pady=(0, 15))
+    test_row_frame.pack(pady=(5, 15))
     
     test_vibration_btn = tk.Button(
         test_row_frame,
@@ -2371,6 +2661,360 @@ def open_settings_window(parent_root, automation_controller=None):
     test_vibration_btn.pack()
     
     # ==================== DEBUG / ERWEITERT TAB ====================
+    
+    # --- Kamera-Einstellungen (Weißabgleich & Autofokus) ---
+    camera_settings_frame = tk.LabelFrame(
+        debug_tab,
+        text="📷 Kamera-Einstellungen",
+        font=('Helvetica', 12, 'bold'),
+        bg='#2b2b2b',
+        fg='white',
+        relief='flat',
+        bd=2
+    )
+    camera_settings_frame.pack(fill='x', pady=(10, 15), padx=10)
+    
+    # Info-Text
+    camera_info_label = tk.Label(
+        camera_settings_frame,
+        text="Weißabgleich und Autofokus für die Bildaufnahme konfigurieren.",
+        font=('Helvetica', 9),
+        bg='#2b2b2b',
+        fg='#cccccc',
+        justify='left'
+    )
+    camera_info_label.pack(pady=(10, 5), padx=10)
+    
+    # --- Weißabgleich-Modus ---
+    awb_row_frame = tk.Frame(camera_settings_frame, bg='#2b2b2b')
+    awb_row_frame.pack(fill='x', padx=10, pady=5)
+    
+    awb_label = tk.Label(
+        awb_row_frame,
+        text="Weißabgleich-Modus:",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    awb_label.pack(side='left')
+    
+    awb_modes_list = ["auto", "daylight", "cloudy", "tungsten", "fluorescent", "indoor", "custom"]
+    awb_var = tk.StringVar(value=camera_settings.get("awb_mode", "auto"))
+    
+    awb_dropdown = ttk.Combobox(
+        awb_row_frame,
+        textvariable=awb_var,
+        values=awb_modes_list,
+        state="readonly",
+        width=15,
+        font=('Helvetica', 10)
+    )
+    awb_dropdown.pack(side='right', padx=(5, 0))
+    
+    # AWB Status Label
+    awb_status_label = tk.Label(
+        camera_settings_frame,
+        text="",
+        font=('Helvetica', 9),
+        bg='#2b2b2b',
+        fg='#00ff00'
+    )
+    awb_status_label.pack(pady=(0, 5), padx=10)
+    
+    def update_awb_mode(event=None):
+        """Aktualisiert den Weißabgleich-Modus"""
+        global camera_settings
+        mode = awb_var.get()
+        camera_settings["awb_mode"] = mode
+        if mode == "custom":
+            awb_status_label.config(text="⚠️ Bitte Weißabgleich kalibrieren", fg='#ffaa00')
+        else:
+            awb_status_label.config(text=f"✓ AWB-Modus: {mode}", fg='#00ff00')
+        print(f"Weißabgleich-Modus: {mode}")
+    
+    awb_dropdown.bind("<<ComboboxSelected>>", update_awb_mode)
+    
+    # --- Weißabgleich kalibrieren Button ---
+    awb_calibrate_frame = tk.Frame(camera_settings_frame, bg='#2b2b2b')
+    awb_calibrate_frame.pack(fill='x', padx=10, pady=5)
+    
+    def calibrate_white_balance():
+        """Kalibriert den Weißabgleich mit aktuellem Bild"""
+        global camera_settings
+        awb_status_label.config(text="📷 Kalibriere Weißabgleich...", fg='#ffaa00')
+        camera_settings_frame.update()
+        
+        try:
+            # LED einschalten für konsistente Beleuchtung
+            set_ring_white()
+            
+            # Kamera starten und Gains auslesen
+            picam2.start()
+            import time
+            time.sleep(1.0)  # Warten bis AWB stabil ist
+            
+            # Aktuelle Gains auslesen
+            metadata = picam2.capture_metadata()
+            if "ColourGains" in metadata:
+                gains = metadata["ColourGains"]
+                camera_settings["awb_gains"] = tuple(gains)
+                camera_settings["awb_mode"] = "custom"
+                awb_var.set("custom")
+                awb_status_label.config(
+                    text=f"✓ AWB kalibriert: R={gains[0]:.2f}, B={gains[1]:.2f}",
+                    fg='#00ff00'
+                )
+                print(f"Weißabgleich kalibriert: Gains = {gains}")
+            else:
+                awb_status_label.config(text="⚠️ Keine Gains verfügbar", fg='#ff4444')
+            
+            picam2.stop()
+            clear_ring()
+        except Exception as e:
+            awb_status_label.config(text=f"❌ Fehler: {str(e)}", fg='#ff4444')
+            print(f"AWB-Kalibrierung fehlgeschlagen: {e}")
+            try:
+                picam2.stop()
+                clear_ring()
+            except:
+                pass
+    
+    calibrate_awb_btn = tk.Button(
+        awb_calibrate_frame,
+        text="🎨 Weißabgleich kalibrieren",
+        font=('Helvetica', 10, 'bold'),
+        bg='#3a5a8b',
+        fg='white',
+        activebackground='#4a6a9b',
+        activeforeground='white',
+        relief='flat',
+        padx=15,
+        pady=8,
+        cursor='hand2',
+        command=calibrate_white_balance
+    )
+    calibrate_awb_btn.pack(side='left', padx=(0, 10))
+    
+    def reset_white_balance():
+        """Setzt Weißabgleich auf Auto zurück"""
+        global camera_settings
+        camera_settings["awb_mode"] = "auto"
+        camera_settings["awb_gains"] = None
+        awb_var.set("auto")
+        awb_status_label.config(text="✓ AWB zurückgesetzt auf Auto", fg='#00ff00')
+        print("Weißabgleich auf Auto zurückgesetzt")
+    
+    reset_awb_btn = tk.Button(
+        awb_calibrate_frame,
+        text="↺ Reset",
+        font=('Helvetica', 10),
+        bg='#5a5a5a',
+        fg='white',
+        activebackground='#6a6a6a',
+        relief='flat',
+        padx=10,
+        pady=8,
+        cursor='hand2',
+        command=reset_white_balance
+    )
+    reset_awb_btn.pack(side='left')
+    
+    # --- Autofokus-Modus ---
+    af_row_frame = tk.Frame(camera_settings_frame, bg='#2b2b2b')
+    af_row_frame.pack(fill='x', padx=10, pady=(15, 5))
+    
+    af_label = tk.Label(
+        af_row_frame,
+        text="Autofokus-Modus:",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    af_label.pack(side='left')
+    
+    af_modes_list = ["auto", "continuous", "manual"]
+    af_var = tk.StringVar(value=camera_settings.get("af_mode", "auto"))
+    
+    af_dropdown = ttk.Combobox(
+        af_row_frame,
+        textvariable=af_var,
+        values=af_modes_list,
+        state="readonly",
+        width=15,
+        font=('Helvetica', 10)
+    )
+    af_dropdown.pack(side='right', padx=(5, 0))
+    
+    # AF Status Label
+    af_status_label = tk.Label(
+        camera_settings_frame,
+        text="",
+        font=('Helvetica', 9),
+        bg='#2b2b2b',
+        fg='#00ff00'
+    )
+    af_status_label.pack(pady=(0, 5), padx=10)
+    
+    # --- Manuelle Fokusposition ---
+    focus_row_frame = tk.Frame(camera_settings_frame, bg='#2b2b2b')
+    focus_row_frame.pack(fill='x', padx=10, pady=5)
+    
+    focus_label = tk.Label(
+        focus_row_frame,
+        text="Fokusposition (manuell):",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='white',
+        width=20,
+        anchor='w'
+    )
+    focus_label.pack(side='left')
+    
+    focus_value_label = tk.Label(
+        focus_row_frame,
+        text=f"{camera_settings.get('lens_position', 0.0):.1f}",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#00ff00',
+        width=6
+    )
+    focus_value_label.pack(side='right', padx=(5, 0))
+    
+    focus_slider = tk.Scale(
+        focus_row_frame,
+        from_=0.0,
+        to=10.0,
+        resolution=0.1,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a3a',
+        activebackground='#4a4a4a',
+        state='disabled',  # Standardmäßig deaktiviert
+        command=lambda val: update_focus_position(val)
+    )
+    focus_slider.set(camera_settings.get('lens_position', 0.0))
+    focus_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+    
+    def update_focus_position(value):
+        """Aktualisiert die manuelle Fokusposition"""
+        global camera_settings
+        pos = float(value)
+        camera_settings["lens_position"] = pos
+        focus_value_label.config(text=f"{pos:.1f}")
+        print(f"Fokusposition: {pos}")
+    
+    def update_af_mode(event=None):
+        """Aktualisiert den Autofokus-Modus"""
+        global camera_settings
+        mode = af_var.get()
+        camera_settings["af_mode"] = mode
+        
+        if mode == "manual":
+            focus_slider.config(state='normal')
+            af_status_label.config(text="Manueller Fokus - Slider verwenden", fg='#ffaa00')
+        else:
+            focus_slider.config(state='disabled')
+            af_status_label.config(text=f"✓ AF-Modus: {mode}", fg='#00ff00')
+        print(f"Autofokus-Modus: {mode}")
+    
+    af_dropdown.bind("<<ComboboxSelected>>", update_af_mode)
+    
+    # --- Autofokus kalibrieren Button ---
+    af_calibrate_frame = tk.Frame(camera_settings_frame, bg='#2b2b2b')
+    af_calibrate_frame.pack(fill='x', padx=10, pady=(5, 15))
+    
+    def calibrate_autofocus():
+        """Führt Autofokus durch und speichert die Position"""
+        global camera_settings
+        af_status_label.config(text="📷 Fokussiere...", fg='#ffaa00')
+        camera_settings_frame.update()
+        
+        try:
+            set_ring_white()
+            picam2.start()
+            
+            # Autofokus auslösen
+            picam2.set_controls({"AfMode": 1, "AfTrigger": 0})  # Auto AF, trigger
+            import time
+            time.sleep(2.0)  # Warten bis AF abgeschlossen
+            
+            # Aktuelle Fokusposition auslesen
+            metadata = picam2.capture_metadata()
+            if "LensPosition" in metadata:
+                lens_pos = metadata["LensPosition"]
+                camera_settings["lens_position"] = lens_pos
+                camera_settings["af_mode"] = "manual"
+                af_var.set("manual")
+                focus_slider.config(state='normal')
+                focus_slider.set(lens_pos)
+                focus_value_label.config(text=f"{lens_pos:.1f}")
+                af_status_label.config(
+                    text=f"✓ Fokus kalibriert: Position = {lens_pos:.2f}",
+                    fg='#00ff00'
+                )
+                print(f"Fokus kalibriert: LensPosition = {lens_pos}")
+            else:
+                af_status_label.config(text="⚠️ Keine Fokusposition verfügbar", fg='#ff4444')
+            
+            picam2.stop()
+            clear_ring()
+        except Exception as e:
+            af_status_label.config(text=f"❌ Fehler: {str(e)}", fg='#ff4444')
+            print(f"AF-Kalibrierung fehlgeschlagen: {e}")
+            try:
+                picam2.stop()
+                clear_ring()
+            except:
+                pass
+    
+    calibrate_af_btn = tk.Button(
+        af_calibrate_frame,
+        text="🔍 Autofokus kalibrieren",
+        font=('Helvetica', 10, 'bold'),
+        bg='#3a5a8b',
+        fg='white',
+        activebackground='#4a6a9b',
+        activeforeground='white',
+        relief='flat',
+        padx=15,
+        pady=8,
+        cursor='hand2',
+        command=calibrate_autofocus
+    )
+    calibrate_af_btn.pack(side='left', padx=(0, 10))
+    
+    def reset_autofocus():
+        """Setzt Autofokus auf Auto zurück"""
+        global camera_settings
+        camera_settings["af_mode"] = "auto"
+        camera_settings["lens_position"] = 0.0
+        af_var.set("auto")
+        focus_slider.config(state='disabled')
+        focus_slider.set(0.0)
+        focus_value_label.config(text="0.0")
+        af_status_label.config(text="✓ AF zurückgesetzt auf Auto", fg='#00ff00')
+        print("Autofokus auf Auto zurückgesetzt")
+    
+    reset_af_btn = tk.Button(
+        af_calibrate_frame,
+        text="↺ Reset",
+        font=('Helvetica', 10),
+        bg='#5a5a5a',
+        fg='white',
+        activebackground='#6a6a6a',
+        relief='flat',
+        padx=10,
+        pady=8,
+        cursor='hand2',
+        command=reset_autofocus
+    )
+    reset_af_btn.pack(side='left')
     
     # --- Teile-Erkennung (Motion Detection) ---
     if automation_controller:
