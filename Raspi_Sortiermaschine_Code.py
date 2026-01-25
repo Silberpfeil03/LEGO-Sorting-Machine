@@ -3038,6 +3038,23 @@ set_info_label.pack(side='left', fill='both', expand=True)
 set_images_container = tk.Frame(set_details_container, bg='#2b2b2b')
 set_images_container.pack(side='left', padx=(20, 0))
 
+# Fehlende Teile anzeigen Button
+missing_parts_button = tk.Button(
+    set_info_frame,
+    text="Fehlende Teile anzeigen",
+    font=('Helvetica', 11, 'bold'),
+    bg='#3a7ca5',
+    fg='white',
+    activebackground='#4a8cb5',
+    activeforeground='white',
+    relief='flat',
+    bd=0,
+    padx=14,
+    pady=8,
+    cursor='hand2'
+)
+missing_parts_button.pack(pady=(0, 12))
+
 # Status-Label
 status_label = tk.Label(
     main_container,
@@ -3760,6 +3777,126 @@ class AutomationController:
             if set_num in self.progress_labels:
                 self.progress_labels[set_num].config(text=f"{percentage}% ({found_qty}/{total_qty})")
 
+    def _compute_missing_parts(self):
+        """Berechnet fehlende Teile je Set on-demand."""
+        results = []
+        for set_num in self.set_numbers:
+            parts = self.parts_per_set.get(set_num, [])
+            if not parts:
+                continue
+            required = {}
+            meta = {}
+            for p in parts:
+                key = (p.get('id'), p.get('color_name'))
+                qty = 0
+                try:
+                    qty = int(p.get('qty', '1'))
+                except Exception:
+                    qty = 0
+                required[key] = required.get(key, 0) + qty
+                if key not in meta:
+                    meta[key] = {
+                        'id': p.get('id', ''),
+                        'color': p.get('color_name', ''),
+                        'name': p.get('name', '')
+                    }
+            found_map = self.found_parts_per_set.get(set_num, {})
+            missing_list = []
+            total_required = sum(required.values())
+            total_found = sum(found_map.values())
+            for key, req_qty in required.items():
+                found_qty = found_map.get(key, 0)
+                missing_qty = max(0, req_qty - found_qty)
+                if missing_qty > 0:
+                    info = meta.get(key, {'id': key[0], 'color': key[1], 'name': ''})
+                    missing_list.append({
+                        'id': info.get('id', ''),
+                        'color': info.get('color', ''),
+                        'name': info.get('name', ''),
+                        'missing': missing_qty,
+                        'required': req_qty,
+                        'found': found_qty
+                    })
+            if missing_list:
+                results.append({
+                    'set_number': set_num,
+                    'missing': missing_list,
+                    'total_required': total_required,
+                    'total_found': total_found
+                })
+        return results
+
+    def show_missing_parts(self):
+        """Öffnet ein Fenster mit fehlenden Teilen je Set."""
+        data = self._compute_missing_parts()
+
+        win = tk.Toplevel(self.root)
+        win.title("Fehlende Teile")
+        win.geometry("900x500")
+        win.configure(bg='#1e1e1e')
+
+        title = tk.Label(win, text="Fehlende Teile", font=('Helvetica', 14, 'bold'), bg='#1e1e1e', fg='white')
+        title.pack(pady=(10, 6))
+
+        if not data:
+            msg = tk.Label(win, text="Alle geladenen Sets sind vollständig erkannt!", font=('Helvetica', 12), bg='#1e1e1e', fg='#4caf50')
+            msg.pack(pady=20)
+            return
+
+        container = tk.Frame(win, bg='#1e1e1e')
+        container.pack(fill='both', expand=True, padx=10, pady=10)
+
+        cols = ("set", "part", "color", "missing", "found", "required", "name")
+        tree = ttk.Treeview(container, columns=cols, show='headings', height=18)
+        tree.heading("set", text="Set")
+        tree.heading("part", text="Teil-ID")
+        tree.heading("color", text="Farbe")
+        tree.heading("missing", text="Fehlt")
+        tree.heading("found", text="Gefunden")
+        tree.heading("required", text="Benötigt")
+        tree.heading("name", text="Name")
+
+        tree.column("set", width=100, anchor='w')
+        tree.column("part", width=100, anchor='w')
+        tree.column("color", width=140, anchor='w')
+        tree.column("missing", width=70, anchor='center')
+        tree.column("found", width=80, anchor='center')
+        tree.column("required", width=80, anchor='center')
+        tree.column("name", width=280, anchor='w')
+
+        vsb = tk.Scrollbar(container, orient='vertical', command=tree.yview)
+        hsb = tk.Scrollbar(container, orient='horizontal', command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        for entry in data:
+            set_num = entry['set_number']
+            for m in entry['missing']:
+                tree.insert('', 'end', values=(
+                    set_num,
+                    m.get('id', ''),
+                    m.get('color', ''),
+                    m.get('missing', 0),
+                    m.get('found', 0),
+                    m.get('required', 0),
+                    m.get('name', '')
+                ))
+
+        info_text = tk.Label(
+            win,
+            text="Berechnung erfolgt on-demand aus geladenen Sets und erkannten Teilen.",
+            font=('Helvetica', 9),
+            bg='#1e1e1e',
+            fg='#888888'
+        )
+        info_text.pack(pady=(6, 10))
+
     def clear_sets(self):
         """Löscht alle geladenen Sets."""
         self.set_numbers = []
@@ -4361,6 +4498,7 @@ start_button.config(command=automation.start)
 pause_button.config(command=automation.toggle_pause)
 stop_button.config(command=automation.stop)
 settings_button.config(command=lambda: open_settings_window(root, automation))
+missing_parts_button.config(command=automation.show_missing_parts)
 
 # Kamera vorbereiten
 try:
