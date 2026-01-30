@@ -80,28 +80,28 @@ pip3 install --user spidev
 
 ## 🔌 Pin Connections
 
-Connect the components to your Raspberry Pi GPIO pins accordingly. The following BCM pin mapping is used in the code:
+Connect the components to your Raspberry Pi GPIO pins accordingly. The following WiringPi pin mapping is used in the code:
 
-### Pin Configuration (BCM Mode)
+### Pin Configuration (WiringPi Mode)
 
-| Component | BCM Pin | Function | Notes |
-|-----------|---------|----------|-------|
-| Stepper Motor Speed (PWM) | GPIO 18 | PWM0 | Hardware PWM for speed control |
-| Stepper Motor Direction | GPIO 17 | GPIO | 0=Up, 1=Down |
-| Lower Limit Sensor | GPIO 27 | Input | Normally Open (1=triggered) |
-| Upper Limit Sensor | GPIO 16 | Input | Pull-Down configuration |
-| Sorting Servo | GPIO 13 | PWM1 | Hardware PWM, 270° servo |
-| Gate/Schleuse Servo | GPIO 25 | GPIO | Software PWM for gate mechanism |
-| Vibration Motor 1 | GPIO 23 | GPIO | Software PWM |
-| Vibration Motor 2 | GPIO 24 | GPIO | Software PWM |
-| Vibration Kill Pin | GPIO 14 | Output | Emergency stop for lower vibration motor |
-| LED Strip (WS281x) | GPIO 18 | PWM | **Note:** Conflicts with Stepper PWM! |
-| LED Strip (SPI Alternative) | GPIO 10 | MOSI (SPI0) | Use this if GPIO 18 is needed for stepper |
+| Component | WiringPi Pin | BCM Pin | Physical Pin | Function | Notes |
+|-----------|--------------|---------|--------------|----------|-------|
+| Stepper Motor Speed (PWM) | 1 | GPIO 18 | 12 | PWM0 | Hardware PWM for speed control |
+| Stepper Motor Direction | 0 | GPIO 17 | 11 | GPIO | 0=Up, 1=Down |
+| Lower Limit Sensor | 2 | GPIO 27 | 13 | Input | Normally Open (1=triggered) |
+| Upper Limit Sensor | 27 | GPIO 16 | 36 | Input | Pull-Down configuration |
+| Sorting Servo | 23 | GPIO 13 | 33 | PWM1 | Hardware PWM, 270° servo |
+| Gate/Schleuse Servo | 6 | GPIO 25 | 22 | GPIO | Software PWM for gate mechanism |
+| Vibration Motor 1 | 4 | GPIO 23 | 16 | GPIO | Software PWM |
+| Vibration Motor 2 | 5 | GPIO 24 | 18 | GPIO | Software PWM |
+| Vibration Kill Pin | 8 | GPIO 14 | 8 | Output | Emergency stop for lower vibration motor |
+| LED Strip (WS281x) | 1 | GPIO 18 | 12 | PWM | **Note:** Conflicts with Stepper PWM! |
+| LED Strip (SPI Alternative) | 12 | GPIO 10 | 19 | MOSI (SPI0) | Use this if GPIO 18 is needed for stepper |
 
 **⚠️ Important Notes:**
-- **LED/Stepper Conflict:** GPIO 18 is used for both the Stepper Motor PWM and WS281x LED strip. If you need both, use the SPI option (GPIO 10) for LEDs instead.
+- **LED/Stepper Conflict:** WiringPi Pin 1 (GPIO 18) is used for both the Stepper Motor PWM and WS281x LED strip. If you need both, use the SPI option (WiringPi Pin 12 / GPIO 10) for LEDs instead.
 - Make sure to connect your components according to these pin assignments before running the software.
-- The system uses BCM (Broadcom) pin numbering mode.
+- The system uses WiringPi pin numbering as the standard (BCM and Physical pin numbers are provided for reference).
 
 ## 🚀 Usage
 
