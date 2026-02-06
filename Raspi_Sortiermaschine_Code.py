@@ -2762,6 +2762,13 @@ def open_settings_window(parent_root, automation_controller=None):
                 camera_settings["awb_gains"] = tuple(gains)
                 camera_settings["awb_mode"] = "custom"
                 awb_var.set("custom")
+                # Slider aktualisieren und aktivieren
+                red_gain_slider.config(state='normal')
+                blue_gain_slider.config(state='normal')
+                red_gain_slider.set(gains[0])
+                blue_gain_slider.set(gains[1])
+                red_gain_value_label.config(text=f"{gains[0]:.2f}")
+                blue_gain_value_label.config(text=f"{gains[1]:.2f}")
                 awb_status_label.config(
                     text=f"✓ AWB kalibriert: R={gains[0]:.2f}, B={gains[1]:.2f}",
                     fg='#00ff00'
@@ -2803,6 +2810,13 @@ def open_settings_window(parent_root, automation_controller=None):
         camera_settings["awb_mode"] = "auto"
         camera_settings["awb_gains"] = None
         awb_var.set("auto")
+        # Slider deaktivieren und auf Standardwert setzen
+        red_gain_slider.config(state='disabled')
+        blue_gain_slider.config(state='disabled')
+        red_gain_slider.set(1.5)
+        blue_gain_slider.set(1.5)
+        red_gain_value_label.config(text="1.50")
+        blue_gain_value_label.config(text="1.50")
         awb_status_label.config(text="✓ AWB zurückgesetzt auf Auto", fg='#00ff00')
         print("Weißabgleich auf Auto zurückgesetzt")
     
@@ -2820,6 +2834,175 @@ def open_settings_window(parent_root, automation_controller=None):
         command=reset_white_balance
     )
     reset_awb_btn.pack(side='left')
+    
+    # --- Manuelle Weißabgleich-Slider (Rot/Blau Gain) ---
+    awb_manual_label = tk.Label(
+        camera_settings_frame,
+        text="Manuelle Farbkorrektur (nur bei 'custom' aktiv):",
+        font=('Helvetica', 9, 'italic'),
+        bg='#2b2b2b',
+        fg='#aaaaaa'
+    )
+    awb_manual_label.pack(pady=(10, 5), padx=10, anchor='w')
+    
+    # --- Rot-Gain Slider ---
+    red_gain_row_frame = tk.Frame(camera_settings_frame, bg='#2b2b2b')
+    red_gain_row_frame.pack(fill='x', padx=10, pady=3)
+    
+    red_gain_label = tk.Label(
+        red_gain_row_frame,
+        text="Rot-Gain (R):",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='#ff6666',
+        width=20,
+        anchor='w'
+    )
+    red_gain_label.pack(side='left')
+    
+    # Startwert für Red Gain
+    initial_red_gain = 1.5
+    if camera_settings.get("awb_gains"):
+        initial_red_gain = camera_settings["awb_gains"][0]
+    
+    red_gain_value_label = tk.Label(
+        red_gain_row_frame,
+        text=f"{initial_red_gain:.2f}",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#ff6666',
+        width=6
+    )
+    red_gain_value_label.pack(side='right', padx=(5, 0))
+    
+    def update_red_gain(value):
+        """Aktualisiert den Rot-Gain"""
+        global camera_settings
+        red_val = float(value)
+        red_gain_value_label.config(text=f"{red_val:.2f}")
+        # Aktualisiere awb_gains
+        if camera_settings.get("awb_gains"):
+            blue_val = camera_settings["awb_gains"][1]
+        else:
+            blue_val = blue_gain_slider.get()
+        camera_settings["awb_gains"] = (red_val, blue_val)
+        camera_settings["awb_mode"] = "custom"
+        awb_var.set("custom")
+        awb_status_label.config(text=f"Manuell: R={red_val:.2f}, B={blue_val:.2f}", fg='#00ff00')
+    
+    red_gain_slider = tk.Scale(
+        red_gain_row_frame,
+        from_=0.5,
+        to=4.0,
+        resolution=0.05,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#5a3a3a',
+        activebackground='#ff6666',
+        state='disabled',
+        command=update_red_gain
+    )
+    red_gain_slider.set(initial_red_gain)
+    red_gain_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+    
+    # --- Blau-Gain Slider ---
+    blue_gain_row_frame = tk.Frame(camera_settings_frame, bg='#2b2b2b')
+    blue_gain_row_frame.pack(fill='x', padx=10, pady=3)
+    
+    blue_gain_label = tk.Label(
+        blue_gain_row_frame,
+        text="Blau-Gain (B):",
+        font=('Helvetica', 10),
+        bg='#2b2b2b',
+        fg='#6666ff',
+        width=20,
+        anchor='w'
+    )
+    blue_gain_label.pack(side='left')
+    
+    # Startwert für Blue Gain
+    initial_blue_gain = 1.5
+    if camera_settings.get("awb_gains"):
+        initial_blue_gain = camera_settings["awb_gains"][1]
+    
+    blue_gain_value_label = tk.Label(
+        blue_gain_row_frame,
+        text=f"{initial_blue_gain:.2f}",
+        font=('Helvetica', 10, 'bold'),
+        bg='#2b2b2b',
+        fg='#6666ff',
+        width=6
+    )
+    blue_gain_value_label.pack(side='right', padx=(5, 0))
+    
+    def update_blue_gain(value):
+        """Aktualisiert den Blau-Gain"""
+        global camera_settings
+        blue_val = float(value)
+        blue_gain_value_label.config(text=f"{blue_val:.2f}")
+        # Aktualisiere awb_gains
+        if camera_settings.get("awb_gains"):
+            red_val = camera_settings["awb_gains"][0]
+        else:
+            red_val = red_gain_slider.get()
+        camera_settings["awb_gains"] = (red_val, blue_val)
+        camera_settings["awb_mode"] = "custom"
+        awb_var.set("custom")
+        awb_status_label.config(text=f"Manuell: R={red_val:.2f}, B={blue_val:.2f}", fg='#00ff00')
+    
+    blue_gain_slider = tk.Scale(
+        blue_gain_row_frame,
+        from_=0.5,
+        to=4.0,
+        resolution=0.05,
+        orient='horizontal',
+        bg='#2b2b2b',
+        fg='white',
+        highlightthickness=0,
+        troughcolor='#3a3a5a',
+        activebackground='#6666ff',
+        state='disabled',
+        command=update_blue_gain
+    )
+    blue_gain_slider.set(initial_blue_gain)
+    blue_gain_slider.pack(side='right', fill='x', expand=True, padx=(10, 5))
+    
+    # Aktualisiere update_awb_mode um Slider zu aktivieren/deaktivieren
+    def update_awb_mode_with_sliders(event=None):
+        """Aktualisiert den Weißabgleich-Modus und Slider-Status"""
+        global camera_settings
+        mode = awb_var.get()
+        camera_settings["awb_mode"] = mode
+        
+        if mode == "custom":
+            red_gain_slider.config(state='normal')
+            blue_gain_slider.config(state='normal')
+            # Setze Gains wenn vorhanden
+            if camera_settings.get("awb_gains"):
+                red_gain_slider.set(camera_settings["awb_gains"][0])
+                blue_gain_slider.set(camera_settings["awb_gains"][1])
+                awb_status_label.config(
+                    text=f"Manuell: R={camera_settings['awb_gains'][0]:.2f}, B={camera_settings['awb_gains'][1]:.2f}",
+                    fg='#00ff00'
+                )
+            else:
+                awb_status_label.config(text="Slider verwenden oder kalibrieren", fg='#ffaa00')
+        else:
+            red_gain_slider.config(state='disabled')
+            blue_gain_slider.config(state='disabled')
+            awb_status_label.config(text=f"✓ AWB-Modus: {mode}", fg='#00ff00')
+        print(f"Weißabgleich-Modus: {mode}")
+    
+    # Überschreibe die alte Bindung
+    awb_dropdown.unbind("<<ComboboxSelected>>")
+    awb_dropdown.bind("<<ComboboxSelected>>", update_awb_mode_with_sliders)
+    
+    # Initial Slider-Status setzen
+    if awb_var.get() == "custom":
+        red_gain_slider.config(state='normal')
+        blue_gain_slider.config(state='normal')
     
     # --- Autofokus-Modus ---
     af_row_frame = tk.Frame(camera_settings_frame, bg='#2b2b2b')
