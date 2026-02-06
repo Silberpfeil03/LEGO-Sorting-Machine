@@ -6,7 +6,7 @@
 
 ## 📖 Project Overview
 
-This is an **open-source university project** that uses a Raspberry Pi, camera module, and mechanical components to automatically identify and sort LEGO bricks by **color and type**. The system leverages the [Brickognize API](https://brickognize.com/) for brick recognition and controls servos, stepper motors, and LED strips for the sorting process according to teh given LEGO Sets.
+This is an **open-source university project** that uses a Raspberry Pi, camera module, and mechanical components to automatically identify and sort LEGO bricks by **color and type**. The system leverages the [Brickognize API](https://brickognize.com/) for brick recognition and controls servos, stepper motors, and LED strips for the sorting process according to the given LEGO Sets.
 
 > ⚠️ **Disclaimer:** This project is provided as-is for educational purposes. We do not take responsibility for any damage, accidents, or injuries that may occur during the construction, operation, or use of this sorting machine. **Use at your own risk.**
 
