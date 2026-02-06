@@ -6,7 +6,7 @@
 
 ## 📖 Project Overview
 
-This is an **open-source university project** that uses a Raspberry Pi, camera module, and mechanical components to automatically identify and sort LEGO bricks by **color and type**. The system leverages the [Brickognize API](https://brickognize.com/) for brick recognition and controls servos, stepper motors, and LED strips for the sorting process.
+This is an **open-source university project** that uses a Raspberry Pi, camera module, and mechanical components to automatically identify and sort LEGO bricks by **color and type**. The system leverages the [Brickognize API](https://brickognize.com/) for brick recognition and controls servos, stepper motors, and LED strips for the sorting process according to teh given LEGO Sets.
 
 > ⚠️ **Disclaimer:** This project is provided as-is for educational purposes. We do not take responsibility for any damage, accidents, or injuries that may occur during the construction, operation, or use of this sorting machine. **Use at your own risk.**
 
@@ -73,13 +73,13 @@ pip3 install --user openpyxl
 **LED Strip support** (choose one based on your hardware):
 
 ```bash
-# Option 1: WS281x LEDs (recommended – uses GPIO 18)
+# Option 1: WS281x LEDs (recommended – uses GPIO 12)
 pip3 install --user rpi-ws281x
 
 # Option 2: Adafruit NeoPixel
 pip3 install --user adafruit-circuitpython-neopixel
 
-# Option 3: SPI-based LEDs (alternative – uses GPIO 10)
+# Option 3: SPI-based LEDs (alternative – uses GPIO 12)
 pip3 install --user spidev
 ```
 
@@ -102,7 +102,6 @@ Connect the components to your Raspberry Pi GPIO pins. The following **WiringPi 
 | Vibration Kill Pin | 8 | Output | Emergency stop for lower vibration motor |
 | LED Strip (SPI Alternative) | 12 | MOSI (SPI0) | Use if GPIO 18 is occupied |
 
-> **⚠️ LED/Stepper Conflict:** WiringPi Pin 1 (GPIO 18) is used for both the Stepper Motor PWM **and** WS281x LED strip. If you need both, use the SPI option (WiringPi Pin 12 / GPIO 10) for LEDs instead.
 
 ---
 
@@ -132,7 +131,7 @@ python3 Raspi_Sortiermaschine_Code.py
 |---|---|
 | **Schleuse Mechanism** | The gate/lock mechanism may require adjustments depending on your servo choice. Consider using a stronger servo for reliable operation. |
 | **Servo Selection** | Standard hobby servos may not provide enough torque. Use stronger servos for critical components, especially the Schleuse. |
-| **Calibration** | You may need to calibrate servo positions and sensor thresholds for your specific build. |
+| **Calibration** | You may need to calibrate servo positions for your specific build. |
 
 ---
 
@@ -142,15 +141,10 @@ python3 Raspi_Sortiermaschine_Code.py
 |---|---|
 | `Raspi_Sortiermaschine_Code.py` | Main control software |
 | `lego_colors.CSV` / `lego_colors.xlsx` | LEGO color reference database |
-| 3D printable parts | *(to be listed)* |
+| 3D printable parts | Can be found in the printing folder|
 
 ---
 
-## 🤝 Contributing
-
-This is an open-source project. Contributions, improvements, and adaptations are welcome!
-
----
 
 ## 📄 License
 
