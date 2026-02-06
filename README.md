@@ -1,6 +1,6 @@
 # 🧱 LEGO Sorting Machine
 
-> A university project for automatically sorting LEGO bricks using computer vision, Raspberry Pi, and mechanical sorting mechanisms.
+> A university project for automatically sorting LEGO bricks according to Set Numbers using computer vision, Raspberry Pi, and mechanical sorting mechanisms.
 
 ---
 
