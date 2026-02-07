@@ -32,6 +32,7 @@ This is an **open-source university project** that uses a Raspberry Pi, camera m
 - LED strip (WS281x/NeoPixel compatible or SPI)
 - Power supply suitable for servos and motors
 - Connecting wires and breadboard/PCB
+- aluminum profiles
 
 ### 3D Printed Parts
 
