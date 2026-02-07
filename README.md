@@ -30,7 +30,6 @@ This is an **open-source university project** that uses a Raspberry Pi, camera m
 - Servo motors (recommend using stronger servos for the Schleuse/gate mechanism)
 - Stepper motor with driver
 - LED strip (WS281x/NeoPixel compatible or SPI)
-- Various sensors (IR/proximity sensors)
 - Power supply suitable for servos and motors
 - Connecting wires and breadboard/PCB
 
