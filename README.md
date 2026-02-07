@@ -99,7 +99,7 @@ Connect the components to your Raspberry Pi GPIO pins. The following **WiringPi 
 | Gate/Schleuse Servo | 6 | GPIO | Software PWM for gate mechanism |
 | Vibration Motor 1 | 4 | GPIO | Software PWM |
 | Vibration Motor 2 | 5 | GPIO | Software PWM |
-| Vibration Kill Pin | 8 | Output | Emergency stop for lower vibration motor |
+| Vibration Kill Pin | 8 | Output | Instant stop for lower vibration motor |
 | LED Strip (SPI Alternative) | 12 | MOSI (SPI0) | Use if GPIO 18 is occupied |
 
 
